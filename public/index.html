@@ -1,0 +1,588 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, maximum-scale=1.0" />
+<title>HillGuard — Conveyor Dislodgement Prevention</title>
+
+<!-- PWA: installable app icon + standalone mode -->
+<link rel="manifest" href="/manifest.json" />
+<meta name="theme-color" content="#0B0F12" />
+<link rel="icon" href="/icons/icon-192.png" />
+<link rel="apple-touch-icon" href="/icons/icon-180.png" />
+<meta name="mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+<meta name="apple-mobile-web-app-title" content="HillGuard" />
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@500;600;700&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/css/style.css" />
+</head>
+<body>
+
+<!-- ============ LOGIN VIEW ============ -->
+<div id="loginView" class="login-screen">
+  <div class="login-card">
+    <div class="brand">
+      <div class="brand-mark">HG</div>
+      <div>
+        <div class="brand-title">HillGuard</div>
+        <div class="brand-sub">Conveyor Dislodgement Prevention System</div>
+      </div>
+    </div>
+    <form id="loginForm">
+      <label>Username
+        <input type="text" id="username" autocomplete="username" required />
+      </label>
+      <label>Password
+        <input type="password" id="password" autocomplete="current-password" required />
+      </label>
+      <button type="submit" class="btn btn-primary btn-block">Sign in</button>
+      <div id="loginError" class="error-text"></div>
+    </form>
+    <div class="demo-accounts">
+      <div class="demo-title">Demo accounts</div>
+      <div class="demo-row"><span>admin / admin123</span><span class="tag tag-admin">ADMIN</span></div>
+      <div class="demo-row"><span>operator / operator123</span><span class="tag tag-op">OPERATOR</span></div>
+      <div class="demo-row"><span>viewer / viewer123</span><span class="tag tag-view">VIEWER</span></div>
+    </div>
+  </div>
+</div>
+
+<!-- ============ DASHBOARD VIEW ============ -->
+<div id="dashView" class="dash hidden">
+
+  <header class="topbar">
+    <div class="brand brand-sm">
+      <div class="brand-mark">HG</div>
+      <div>
+        <div class="brand-title">HillGuard</div>
+        <div class="brand-sub">Hilly-terrain conveyor monitoring</div>
+      </div>
+    </div>
+      <nav class="side-nav" aria-label="Dashboard navigation">
+        <button class="side-nav-item active" type="button" data-page="dashboard">⌂ <span>Dashboard</span></button>
+        <button class="side-nav-item" type="button" data-page="twin">◈ <span>Digital Twin</span></button>
+        <button class="side-nav-item" type="button" data-page="assets">⚙ <span>Assets</span></button>
+        <button class="side-nav-item" type="button" data-page="workorders">📋 <span>Work Orders</span></button>
+        <button class="side-nav-item" type="button" data-page="whatif">◈ <span>What-If Analysis</span></button>
+        <button class="side-nav-item" type="button" data-page="models">◉ <span>Multiple Models</span></button>
+        <button class="side-nav-item" type="button" data-page="video">▣ <span>Video Inspection</span></button>
+        <button class="side-nav-item" type="button" data-page="alerts">⚠ <span>Live Alerts</span></button>
+        <button class="side-nav-item" type="button" data-page="audit">▤ <span>Audit Logs</span></button>
+        <button class="side-nav-item" type="button" data-page="reports">⇩ <span>Reports</span></button>
+      </nav>
+    <div class="topbar-tools">
+      <button id="themeToggle" class="btn btn-ghost theme-toggle" type="button" aria-label="Switch to light theme" title="Switch theme">☀ <span>Light mode</span></button>
+    </div>
+    <div class="topbar-status">
+      <span id="connDot" class="dot dot-off"></span>
+      <span id="connLabel">connecting…</span>
+    </div>
+    <div class="topbar-user">
+      <span id="userLabel"></span>
+      <span id="userRole" class="tag"></span>
+      <button id="logoutBtn" class="btn btn-ghost">Sign out</button>
+    </div>
+  </header>
+
+  <main class="layout">
+
+    <!-- Live command-center summary. Values are hydrated from current telemetry and API state. -->
+    <section class="dashboard-overview" id="dashboardOverview" aria-label="Live system overview">
+      <div class="overview-heading">
+        <div><span class="eyebrow">HILLGUARD / OPERATIONS</span><h1>Conveyor Command Center</h1><p>Live telemetry, risk state and maintenance activity across the route.</p></div>
+        <div class="overview-live"><span class="dot dot-off" id="overviewConnDot"></span><span id="overviewUpdatedAt">Waiting for telemetry</span></div>
+      </div>
+      <div class="overview-kpis" id="overviewKpis">
+        <article class="overview-kpi"><span>Monitored zones</span><strong id="kpiZones">—</strong><small>Across the conveyor route</small></article>
+        <article class="overview-kpi"><span>Running</span><strong id="kpiRunning">—</strong><small>Zones currently in motion</small></article>
+        <article class="overview-kpi kpi-warning"><span>Elevated risk</span><strong id="kpiElevated">—</strong><small>Warning or critical zones</small></article>
+        <article class="overview-kpi kpi-critical"><span>Open alerts</span><strong id="kpiAlerts">—</strong><small>Awaiting operator action</small></article>
+        <article class="overview-kpi"><span>Telemetry health</span><strong id="kpiTelemetry">—</strong><small id="kpiTelemetrySub">Sensor freshness</small></article>
+      </div>
+    </section>
+
+    <!-- Left navigation / route overview -->
+    <section class="panel panel-map">
+      <div id="routeProfileContent" class="route-profile-content">
+        <div class="panel-head route-head">
+          <h2>Route Profile — Hilly Terrain Overland Conveyor</h2>
+          <span class="panel-note">Live status per monitored zone</span>
+        </div>
+        <svg id="terrainSvg" viewBox="0 0 1000 260" preserveAspectRatio="none" class="terrain-svg"></svg>
+        <div id="zoneCards" class="zone-cards"></div>
+      </div>
+
+
+
+
+    </section>
+
+    <!-- Multi-model validation is a standalone dashboard section -->
+    <section class="panel model-validation-panel page-hidden" id="modelValidationPanel">
+      <div class="panel-head model-panel-head">
+        <div>
+          <h2>Multiple Models</h2>
+          <span class="panel-note">Model performance, live risk predictions, and held-out test confusion matrices</span>
+        </div>
+        <div class="model-header-controls">
+          <label for="modelZoneSelect">Conveyor zone</label>
+          <select id="modelZoneSelect" class="zone-select" aria-label="Select conveyor zone for model predictions"></select>
+          <span id="modelDatasetInfo" class="tag tag-view">Loading model metrics…</span>
+        </div>
+      </div>
+      <div id="modelCards" class="model-cards"></div>
+      <div id="modelDetailPage" class="model-detail-page page-hidden"></div>
+    </section>
+
+
+    <!-- Dedicated What-If Analysis page: route profile on the left, simulation on the right -->
+    <section class="panel whatif-page-panel page-hidden" id="whatIfPagePanel">
+      <div class="panel-head">
+        <h2>What-If Analysis</h2>
+        <span class="panel-note">Select any conveyor zone and compare projected risk with and without the recommended action.</span>
+      </div>
+      <div class="whatif-panel" id="whatIfPanel">
+        <div class="chart-label-row whatif-heading">
+          <div>
+            <div class="chart-label">Predictive Action Simulator</div>
+            <div class="panel-note">Select a conveyor zone and compare the 10-minute projection with and without the recommended action.</div>
+          </div>
+        </div>
+        <div class="whatif-controls">
+          <label for="whatIfZoneSelect">Conveyor zone</label>
+          <select id="whatIfZoneSelect" class="zone-select" aria-label="Select zone for what-if analysis"></select>
+          <button id="whatIfBtn" class="btn btn-primary btn-sm" type="button">Run analysis</button>
+        </div>
+        <div id="whatIfOutput" class="whatif-output">
+          Run the simulator to compare the projected risk if the recommended action is taken versus if no action is taken.
+        </div>
+      </div>
+
+    </section>
+
+    <!-- Digital Twin Engineering Simulation Lab -->
+    <section class="panel digital-twin-panel page-hidden" id="twinPanel">
+      <div class="digital-twin-head">
+        <div>
+          <h2>Digital Twin — Engineering Simulation &amp; Assembly Lab <span class="live-pill"><span></span> Live Telemetry</span></h2>
+          <div class="panel-note">Interactive zone-aware conveyor twin, component inspection, CEMA / ISO 5048 physics solver, and scenario laboratory</div>
+          <div id="twinActiveZoneContext" class="twin-active-context" aria-live="polite">Waiting for selected zone telemetry</div>
+        </div>
+        <div class="twin-actions">
+          <label class="twin-zone-picker" for="twinZoneSelect"><span>Active zone</span><select id="twinZoneSelect" class="zone-select" aria-label="Select active Digital Twin zone"></select></label>
+          <button class="view-btn active" type="button" data-twin-view="3d">◈ 3D View</button>
+          <button class="view-btn" type="button" data-twin-view="top">◉ Top View</button>
+          <button class="view-btn" type="button" data-twin-view="side">▱ Side View</button>
+          <div class="twin-camera-toolbar">
+            <button class="btn btn-ghost btn-sm" id="twinZoomInBtn" title="Zoom In">+</button>
+            <button class="btn btn-ghost btn-sm" id="twinZoomOutBtn" title="Zoom Out">−</button>
+            <button class="btn btn-ghost btn-sm" id="twinResetCamBtn" title="Reset View">⟲ Reset</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="twin-zone-chips" id="twinZoneChips" role="group" aria-label="Select conveyor zone"></div>
+
+      <!-- Stage and Component Inspector Row -->
+      <div class="digital-twin-workspace">
+        <div class="digital-twin-stage-wrap">
+          <div class="digital-twin-stage" id="digitalTwinStage">
+            <svg id="digitalTwinSvg" viewBox="0 0 1000 390" preserveAspectRatio="xMidYMid meet" aria-label="Interactive conveyor digital twin assembly"></svg>
+          </div>
+          <div class="twin-stage-legend">
+            <span><i class="legend-dot" style="background:var(--accent-cyan)"></i> Nominal Operation</span>
+            <span><i class="legend-dot" style="background:var(--accent-amber)"></i> Warning Threshold</span>
+            <span><i class="legend-dot" style="background:var(--accent-red)"></i> Critical Fault Alarm</span>
+            <span class="legend-hint">🖱 Drag to Pan · Scroll to Zoom · Click any component or sensor to inspect</span>
+          </div>
+        </div>
+
+        <!-- Component Inspector Card (opens on component click) -->
+        <div class="twin-inspector-card" id="twinInspectorCard">
+          <div class="inspector-head">
+            <span class="tag tag-view" id="inspectorTag">MTR-01A</span>
+            <h3 id="inspectorName">Primary Variable Frequency Drive Motor</h3>
+            <span class="panel-note" id="inspectorZone">Zone A · Drive Head</span>
+          </div>
+          <div class="inspector-specs-grid" id="inspectorSpecs">
+            <div><span>Rating</span><strong>550 kW</strong></div>
+            <div><span>Speed</span><strong>1485 RPM</strong></div>
+            <div><span>Voltage</span><strong>690 V</strong></div>
+            <div><span>Bearing</span><strong>SKF 22320</strong></div>
+          </div>
+          <div class="inspector-telemetry-box" id="inspectorTelemetry">
+            <div class="inspector-telemetry-title">Live Component Telemetry</div>
+            <div class="inspector-telemetry-grid" id="inspectorTelemetryGrid">
+              <!-- populated dynamically -->
+            </div>
+          </div>
+          <div class="inspector-status-row">
+            <span>Operating State:</span>
+            <strong id="inspectorStatus" style="color:var(--accent-cyan)">NOMINAL</strong>
+          </div>
+        </div>
+      </div>
+
+      <!-- Live conveyor telemetry strip -->
+      <div class="twin-sensor-strip" id="twinSensorStrip"></div>
+
+      <!-- Engineering Scenario Laboratory -->
+      <div class="twin-scenario-lab" id="twinScenarioLab">
+        <div class="scenario-lab-head">
+          <div>
+            <h3>Conveyor Engineering Scenario Laboratory</h3>
+            <span class="panel-note">Grounded in CEMA 7th Edition &amp; ISO 5048 belt conveyor analytical dynamics</span>
+          </div>
+          <span class="tag tag-op">Predictive Physics Model</span>
+        </div>
+
+        <div class="scenario-lab-grid">
+          <!-- Parameter Tuning Panel -->
+          <div class="scenario-inputs-col">
+            <div class="scenario-input-group">
+              <div class="param-header">
+                <label for="simBeltSpeed">Belt Velocity (v)</label>
+                <span class="param-val" id="valBeltSpeed">3.5 m/s</span>
+              </div>
+              <input type="range" id="simBeltSpeed" min="1.0" max="6.0" step="0.1" value="3.5" class="scenario-slider" />
+            </div>
+
+            <div class="scenario-input-group">
+              <div class="param-header">
+                <label for="simMaterialLoad">Material Flow Rate (Q)</label>
+                <span class="param-val" id="valMaterialLoad">2200 t/h</span>
+              </div>
+              <input type="range" id="simMaterialLoad" min="0" max="4500" step="50" value="2200" class="scenario-slider" />
+            </div>
+
+            <div class="scenario-input-group">
+              <div class="param-header">
+                <label for="simIncline">Terrain Slope / Incline (θ)</label>
+                <span class="param-val" id="valIncline">-8.5° (Downhill)</span>
+              </div>
+              <input type="range" id="simIncline" min="-18" max="18" step="0.5" value="-8.5" class="scenario-slider" />
+            </div>
+
+            <div class="scenario-input-group">
+              <div class="param-header">
+                <label for="simBeltTension">Running Belt Tension (T)</label>
+                <span class="param-val" id="valBeltTension">75 kN</span>
+              </div>
+              <input type="range" id="simBeltTension" min="15" max="130" step="1" value="75" class="scenario-slider" />
+            </div>
+
+            <div class="scenario-input-group">
+              <div class="param-header">
+                <label for="simMisalignment">Idler Stand Misalignment (δ)</label>
+                <span class="param-val" id="valMisalignment">0 mm</span>
+              </div>
+              <input type="range" id="simMisalignment" min="-45" max="45" step="1" value="0" class="scenario-slider" />
+            </div>
+
+            <div class="scenario-input-group">
+              <div class="param-header">
+                <label for="simFriction">Pulley/Belt Friction (μ)</label>
+                <span class="param-val" id="valFriction">0.32</span>
+              </div>
+              <input type="range" id="simFriction" min="0.15" max="0.50" step="0.01" value="0.32" class="scenario-slider" />
+            </div>
+
+            <div class="scenario-input-group">
+              <label for="simFaultCondition" style="font-size:11px;color:var(--text-dim);display:block;margin-bottom:4px">Injected Fault Condition</label>
+              <select id="simFaultCondition" class="zone-select" style="width:100%">
+                <option value="NONE">Nominal Condition (No Injected Fault)</option>
+                <option value="IDLER_SEIZURE">Idler Bearing Seizure (Thermal Runaway)</option>
+                <option value="BELT_MISTRACKING">Severe Belt Mistracking / Edge Skew</option>
+                <option value="MATERIAL_SURGE">Material Surcharge / Chute Overfill</option>
+                <option value="TAKEUP_LOSS">Gravity Take-Up Winch Tension Loss</option>
+                <option value="REGENERATIVE_OVERSPEED">Downhill Regenerative Overspeed Surge</option>
+              </select>
+            </div>
+
+            <div class="scenario-btn-row">
+              <button id="simRunBtn" class="btn btn-primary btn-sm" type="button">Run Physics Simulation</button>
+              <button id="simCompareBtn" class="btn btn-secondary btn-sm" type="button">Compare with Baseline</button>
+              <button id="simResetBtn" class="btn btn-ghost btn-sm" type="button">Reset</button>
+              <button id="simSaveBtn" class="btn btn-secondary btn-sm" type="button">Save Experiment</button>
+            </div>
+          </div>
+
+          <!-- Calculated Physics Results Panel -->
+          <div class="scenario-results-col">
+            <div class="physics-kpi-grid">
+              <div class="physics-card">
+                <div class="physics-val" id="calcSag">1.42%</div>
+                <div class="physics-lbl">Catenary Sag (CEMA &lt; 2.0%)</div>
+              </div>
+              <div class="physics-card">
+                <div class="physics-val" id="calcPower">-284 kW</div>
+                <div class="physics-lbl">Mechanical Power <span class="tag tag-op" id="calcRegenTag">Regenerative</span></div>
+              </div>
+              <div class="physics-card">
+                <div class="physics-val" id="calcDrift">0.0 mm</div>
+                <div class="physics-lbl">Lateral Belt Drift (±25mm tol)</div>
+              </div>
+              <div class="physics-card">
+                <div class="physics-val" id="calcSlip">0.9%</div>
+                <div class="physics-lbl">Euler Capstan Slip (Margin: 2.1)</div>
+              </div>
+              <div class="physics-card">
+                <div class="physics-val" id="calcLinearMass">174.6 kg/m</div>
+                <div class="physics-lbl">Linear Payload (Material + Belt)</div>
+              </div>
+              <div class="physics-card">
+                <div class="physics-val" id="calcRiskScore" style="color:var(--accent-cyan)">18 / 100</div>
+                <div class="physics-lbl">Deterministic Risk Score</div>
+              </div>
+            </div>
+
+            <!-- Active threshold violations list -->
+            <div class="violations-box" id="simViolationsBox">
+              <div class="violations-head">Engineering Limit Checks</div>
+              <div id="simViolationsList"><span style="color:var(--accent-cyan);font-size:12px">✓ All physical parameters within standard CEMA / ISO operating thresholds.</span></div>
+            </div>
+
+            <!-- Baseline vs Modified Comparative Diff -->
+            <div class="scenario-diff-card hidden" id="simDiffCard">
+              <div class="diff-title">Scenario Comparison: Baseline vs. Modified Experiment</div>
+              <div class="diff-table-wrap">
+                <table class="diff-table">
+                  <thead>
+                    <tr><th>Parameter / Output</th><th>Baseline</th><th>Modified</th><th>Delta</th></tr>
+                  </thead>
+                  <tbody id="simDiffBody"></tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Saved Scenario History Table -->
+        <div class="saved-scenarios-wrap">
+          <div class="saved-scenarios-head">
+            <h4>Saved Engineering Scenario Experiments</h4>
+            <span class="panel-note">Reopen prior simulations, review parameter changes, and audit results</span>
+          </div>
+          <div id="savedScenariosList" class="saved-scenarios-list">
+            <p class="panel-note">Loading saved experiments…</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Selected zone detail -->
+    <section class="panel panel-detail" id="detailPanel">
+      <div class="panel-head">
+        <h2 id="detailTitle">Select a zone</h2>
+        <span id="detailDesc" class="panel-note"></span>
+      </div>
+
+      <div class="charts-row zone-analysis-row">
+        <div class="chart-box sensor-trend-box">
+          <div class="chart-label">Sensor Trends (Last 10 minutes)</div>
+          <canvas id="alignChart" height="140"></canvas>
+        </div>
+        <div class="chart-box risk-summary-box">
+          <div class="chart-label">Risk Level</div>
+          <div class="risk-summary-grid">
+            <div class="risk-ring" id="detailRiskRing"><div class="risk-ring-score" id="detailRiskScore">—</div><div class="risk-ring-label" id="detailRiskLabel">WAITING</div></div>
+            <div class="contributing-factors">
+              <div class="chart-label factors-title">Contributing Factors</div>
+              <div id="detailFactors"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <section class="sensor-snapshot-panel" aria-label="Current sensor readings">
+        <div class="sensor-snapshot-heading"><div><h3>Live Sensor Snapshot</h3><p>Latest reading for the selected zone. Values update with telemetry.</p></div><span id="sensorSampleTime" class="sensor-sample-time">No sample yet</span></div>
+        <div class="sensor-snapshot-grid" id="sensorSnapshotGrid"><div class="sensor-empty">Waiting for sensor telemetry…</div></div>
+      </section>
+
+      <div class="ml-ai-row">
+        <div class="ml-box">
+          <div class="chart-label">ML predictive-maintenance model</div>
+          <div class="ml-readout">
+            <div class="ml-prob" id="mlProb">—</div>
+            <div class="ml-sub">
+              <div>probability of dislodgement, ~10 min horizon</div>
+              <div id="mlFactor" class="ml-factor"></div>
+            </div>
+          </div>
+        </div>
+        <div class="ai-box">
+          <div class="chart-label-row">
+            <div class="chart-label">Automated diagnosis (offline, rule-based)</div>
+            <button id="aiBtn" class="btn btn-secondary btn-sm">Generate diagnosis</button>
+          </div>
+          <div id="aiOutput" class="ai-output">Click "Generate diagnosis" for a natural-language root-cause diagnosis and recommended actions for this zone, composed locally from the risk engine and ML model — no internet connection or API key needed.</div>
+        </div>
+      </div>
+
+
+      <div class="controls-row" id="controlsRow">
+        <button class="btn btn-success" data-action="START">Start</button>
+        <button class="btn btn-warning" data-action="STOP">Stop</button>
+        <button class="btn btn-danger" data-action="RESET">Reset / Clear fault</button>
+      </div>
+    </section>
+
+    <!-- Alerts feed -->
+    <section class="panel panel-alerts" id="alertsPanel">
+      <div class="panel-head">
+        <h2>Live Alerts</h2>
+        <span class="panel-note">Auto-generated by risk engine &amp; automation layer</span>
+      </div>
+      <div id="alertsFeed" class="alerts-feed"></div>
+    </section>
+
+    <!-- Asset Registry Page -->
+    <section class="panel page-hidden" id="assetsPanel">
+      <div class="panel-head">
+        <div>
+          <h2>Equipment &amp; Asset Registry</h2>
+          <span class="panel-note">Conveyor drive motors, take-up winches, curved training idlers, and structural trusses</span>
+        </div>
+        <div class="panel-actions"><button id="createAssetBtn" class="btn btn-primary btn-sm hidden" type="button">＋ Add Asset</button><button id="refreshAssetsBtn" class="btn btn-secondary btn-sm" type="button">Refresh assets</button></div>
+      </div>
+      <div id="assetsGrid" class="asset-grid"></div>
+    </section>
+
+    <!-- Work Orders Page -->
+    <section class="panel page-hidden" id="workOrdersPanel">
+      <div class="panel-head">
+        <div>
+          <h2>Maintenance Work Orders</h2>
+          <span class="panel-note">Actionable maintenance tasks converted from alerts with checklist &amp; audit sign-off</span>
+        </div>
+        <button id="refreshWorkOrdersBtn" class="btn btn-secondary btn-sm" type="button">Refresh tasks</button>
+      </div>
+      <div id="workOrdersGrid" class="wo-grid"></div>
+    </section>
+
+    <!-- Reports page -->
+    <section class="panel page-hidden" id="reportsPanel">
+      <div class="panel-head">
+        <div>
+          <h2>Operational Analytics &amp; Reports</h2>
+          <span class="panel-note">Compliance audits, MTTR analytics, and exportable maintenance datasets</span>
+        </div>
+      </div>
+      <div class="reports-page-content">
+        <div id="reportsKpiGrid" class="kpi-grid"></div>
+        <div class="export-row">
+          <button id="downloadReportPageBtn" class="btn btn-primary" type="button">Download PDF Condition Report</button>
+          <button id="exportAlertsCsvBtn" class="btn btn-secondary" type="button">Export Alerts (CSV)</button>
+          <button id="exportWorkOrdersCsvBtn" class="btn btn-secondary" type="button">Export Work Orders (CSV)</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- Audit log page -->
+    <section class="panel panel-audit page-hidden" id="auditPanel">
+      <div class="panel-head">
+        <div><h2>Audit Logs</h2><span class="panel-note">User actions, system events, timestamps, and compliance history</span></div>
+        <button id="refreshAuditBtn" class="btn btn-secondary" type="button">Refresh logs</button>
+      </div>
+      <div id="auditFeed" class="audit-feed"><p class="panel-note">Loading audit history…</p></div>
+    </section>
+
+    <!-- Video inspection -->
+    <section class="panel panel-video" id="videoPanel">
+      <div class="panel-head">
+        <h2>Video Inspection</h2>
+        <span class="panel-note">Upload a clip of the belt — computer vision tracks belt-edge drift &amp; vibration frame-by-frame and generates an offline diagnosis, no internet or API key required</span>
+      </div>
+
+      <div class="video-upload-row">
+        <input type="file" id="videoFile" accept="video/*" />
+        <button id="videoAnalyzeBtn" class="btn btn-primary">Analyze video</button>
+        <span id="videoAiBadge" class="tag"></span>
+      </div>
+
+      <div id="videoProgress" class="video-progress"></div>
+
+      <div id="videoResults" class="video-results hidden">
+        <div class="metric-grid" id="videoMetricGrid"></div>
+        <div class="chart-box">
+          <div class="chart-label">Per-frame CV risk score across the clip</div>
+          <canvas id="videoRiskChart" height="90"></canvas>
+        </div>
+        <div class="video-thumbs" id="videoThumbs"></div>
+        <div class="ai-box">
+          <div class="chart-label">Automated visual diagnosis (offline)</div>
+          <div id="videoAiOutput" class="ai-output"></div>
+        </div>
+      </div>
+    </section>
+
+  </main>
+</div>
+
+<!-- ============ ALERT DETAIL MODAL ============ -->
+<div id="alertModal" class="modal-overlay hidden">
+  <div class="modal-card">
+    <div class="modal-head">
+      <div class="modal-head-left">
+        <span id="modalLevelTag" class="tag"></span>
+        <h3 id="modalZoneName"></h3>
+      </div>
+      <button id="modalCloseBtn" class="btn btn-ghost btn-sm" aria-label="Close">&times;</button>
+    </div>
+
+    <div id="modalMsg" class="modal-msg"></div>
+
+    <div class="modal-meta-row">
+      <span id="modalTime"></span>
+      <span id="modalStatus" class="tag"></span>
+      <span id="modalScore" class="modal-score"></span>
+    </div>
+
+    <div class="modal-section">
+      <div class="modal-section-title">Cause</div>
+      <div id="modalCause" class="modal-cause"></div>
+    </div>
+
+    <div class="modal-section">
+      <div class="modal-section-title">Contributing factors</div>
+      <div id="modalContributors" class="modal-contributors"></div>
+    </div>
+
+    <div class="modal-section">
+      <div class="modal-section-title">Sensor snapshot at time of alert</div>
+      <div id="modalSnapshot" class="modal-snapshot"></div>
+    </div>
+
+    <div class="modal-section">
+      <div class="modal-section-title">Recommended measures to reduce risk</div>
+      <ul id="modalActions" class="modal-actions"></ul>
+    </div>
+
+    <div id="modalAckInfo" class="modal-ack-info"></div>
+
+    <div class="modal-footer">
+      <button id="modalCreateWoBtn" class="btn btn-primary">Create Work Order</button>
+      <button id="modalResolveBtn" class="btn btn-success">Resolve</button>
+      <button id="modalAckBtn" class="btn btn-secondary">Acknowledge</button>
+      <button id="modalCloseBtn2" class="btn btn-ghost">Close</button>
+    </div>
+  </div>
+</div>
+
+<script src="/socket.io/socket.io.js"></script>
+<script src="/vendor/chart.umd.min.js" onerror="this.onerror=null;this.src='https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js'"></script>
+<script src="/vendor/jspdf.umd.min.js" onerror="this.onerror=null;this.src='https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js'"></script>
+<script src="/vendor/jspdf.plugin.autotable.min.js" onerror="this.onerror=null;this.src='https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/5.0.8/jspdf.plugin.autotable.min.js'"></script>
+<script src="/js/app.js"></script>
+<script>
+  if ("serviceWorker" in navigator) {
+    window.addEventListener("load", () => {
+      navigator.serviceWorker.register("/sw.js").catch(() => {});
+    });
+  }
+</script>
+</body>
+</html>

@@ -1,0 +1,17 @@
+{
+  "name": "HillGuard — Conveyor Dislodgement Prevention",
+  "short_name": "HillGuard",
+  "description": "Smart monitoring & predictive dislodgement-prevention for belt conveyors on hilly terrain.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#0B0F12",
+  "theme_color": "#0B0F12",
+  "icons": [
+    { "src": "/icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "/icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "/icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "maskable" },
+    { "src": "/icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}

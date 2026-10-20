@@ -1,0 +1,12 @@
+node_modules
+.env
+.env.*
+!.env.example
+data/db.json
+data/db.json.bak
+data/db.json.tmp.*
+data/*.tmp.*
+.git
+.gitignore
+README.md
+tests

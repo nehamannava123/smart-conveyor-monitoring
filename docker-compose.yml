@@ -1,0 +1,24 @@
+version: '3.8'
+
+services:
+  hillguard:
+    build: .
+    container_name: hillguard-app
+    restart: unless-stopped
+    ports:
+      - "4000:4000"
+    environment:
+      - PORT=4000
+      - NODE_ENV=production
+      - "JWT_SECRET=${JWT_SECRET:?Set JWT_SECRET in your shell or .env (32+ random characters)}"
+      - INITIAL_ADMIN_USERNAME=${INITIAL_ADMIN_USERNAME:-admin}
+      - "INITIAL_ADMIN_PASSWORD=${INITIAL_ADMIN_PASSWORD:?Set INITIAL_ADMIN_PASSWORD in your shell or .env}"
+      - CORS_ORIGIN=${CORS_ORIGIN:-}
+      - AUTO_STOP_ENABLED=${AUTO_STOP_ENABLED:-false}
+      - SIM_TICK_MS=${SIM_TICK_MS:-2000}
+    volumes:
+      - hillguard-data:/app/data
+
+volumes:
+  hillguard-data:
+    driver: local

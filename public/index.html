@@ -67,7 +67,11 @@
         <button class="side-nav-item" type="button" data-page="assets">⚙ <span>Assets</span></button>
         <button class="side-nav-item" type="button" data-page="workorders">📋 <span>Work Orders</span></button>
         <button class="side-nav-item" type="button" data-page="whatif">◈ <span>What-If Analysis</span></button>
-        <button class="side-nav-item" type="button" data-page="models">◉ <span>Multiple Models</span></button>
+        <button class="side-nav-item" type="button" data-page="risk">ⓘ <span>Risk Explainability</span></button>
+        <button class="side-nav-item" type="button" data-page="sensorhealth">⌁ <span>Sensor Health</span></button>
+        <button class="side-nav-item" type="button" data-page="investigation">▣ <span>Incident Investigation</span></button>
+        <button class="side-nav-item" type="button" data-page="history">◷ <span>History &amp; Replay</span></button>
+        <button class="side-nav-item" type="button" data-page="models">◉ <span>ML Evaluation</span></button>
         <button class="side-nav-item" type="button" data-page="video">▣ <span>Video Inspection</span></button>
         <button class="side-nav-item" type="button" data-page="alerts">⚠ <span>Live Alerts</span></button>
         <button class="side-nav-item" type="button" data-page="audit">▤ <span>Audit Logs</span></button>
@@ -134,9 +138,50 @@
         </div>
       </div>
       <div id="modelCards" class="model-cards"></div>
+      <div id="modelEvaluationDiagnostics" class="ops-card">
+        <div class="panel-head"><div><h2>Evaluation Evidence</h2><span class="panel-note">Confusion matrix, precision–recall curve, calibration, false alarms and missed events.</span></div><label>Model <select id="evaluationModelSelect" class="zone-select" aria-label="Select model for evaluation diagnostics"></select></label></div>
+        <div id="evaluationSummary" class="ops-summary-grid"></div>
+        <div id="evaluationPlots" class="ops-chart-grid"></div>
+        <div id="evaluationFaultTable" class="ops-table-wrap"></div>
+        <div id="evaluationNotice" class="ops-notice">Metrics are based on held-out synthetic data and are not field-validation results.</div>
+      </div>
       <div id="modelDetailPage" class="model-detail-page page-hidden"></div>
     </section>
 
+
+    <!-- Risk Explainability -->
+    <section class="panel page-hidden operations-page" id="riskExplainPanel">
+      <div class="panel-head"><div><h2>Risk Explainability</h2><span class="panel-note">Trace each score to measured values, configured thresholds, channel weights and severity rules.</span></div><select id="riskExplainZone" class="zone-select" aria-label="Select zone for risk explanation"></select></div>
+      <div id="riskExplainSummary" class="ops-summary-grid"></div>
+      <div id="riskExplainEvidence" class="ops-table-wrap"></div>
+      <div id="riskExplainActions" class="ops-card"></div>
+    </section>
+
+    <!-- Sensor health and data quality -->
+    <section class="panel page-hidden operations-page" id="sensorHealthPanel">
+      <div class="panel-head"><div><h2>Sensor Health &amp; Data Quality</h2><span class="panel-note">Freshness, missing values, range validation, communication state and calibration readiness.</span></div><button id="refreshSensorHealth" class="btn btn-secondary btn-sm" type="button">Refresh health</button></div>
+      <div id="sensorHealthSummary" class="ops-summary-grid"></div>
+      <div id="sensorHealthNotice" class="ops-notice"></div>
+      <div id="sensorHealthTable" class="ops-table-wrap"></div>
+      <h3>Retained data-quality incident history</h3><div id="sensorHealthIncidents" class="ops-table-wrap"></div>
+    </section>
+
+    <!-- Incident investigation workflow -->
+    <section class="panel page-hidden operations-page" id="investigationPanel">
+      <div class="panel-head"><div><h2>Incident Investigation</h2><span class="panel-note">Correlate the triggering snapshot, nearby readings, probable cause, model limitations and maintenance outcome.</span></div><select id="incidentSelect" class="zone-select" aria-label="Select incident"></select></div>
+      <div id="incidentInvestigationContent" class="ops-content"><p class="panel-note">Loading incident records…</p></div>
+    </section>
+
+    <!-- Historical trends and event replay -->
+    <section class="panel page-hidden operations-page" id="historyReplayPanel">
+      <div class="panel-head"><div><h2>Historical Trends &amp; Event Replay</h2><span class="panel-note">Explore retained sensor history and replay incidents against point-in-time risk snapshots.</span></div></div>
+      <div class="ops-filter-row"><label>Zone <select id="historyZoneSelect" class="zone-select"></select></label><label>From <input id="historyFrom" type="datetime-local"></label><label>To <input id="historyTo" type="datetime-local"></label><button id="loadHistoryReplay" class="btn btn-primary btn-sm" type="button">Load history</button></div>
+      <div id="historyReplayNotice" class="ops-notice"></div>
+      <div id="historyReplaySummary" class="ops-summary-grid"></div>
+      <div id="historyReplayChart" class="ops-chart-grid"></div>
+      <div id="historyReplayEvents" class="ops-table-wrap"></div>
+      <div id="historyReplayFrame" class="ops-card"></div>
+    </section>
 
     <!-- Dedicated What-If Analysis page: route profile on the left, simulation on the right -->
     <section class="panel whatif-page-panel page-hidden" id="whatIfPagePanel">
@@ -165,6 +210,7 @@
 
     <!-- Digital Twin Engineering Simulation Lab -->
     <section class="panel digital-twin-panel page-hidden" id="twinPanel">
+      <div id="replayTwinBanner" class="ops-notice" style="display:none"><strong>Historical replay mode:</strong> the selected zone shows a retained historical sample, not live state. <button id="exitTwinReplay" class="btn btn-secondary btn-sm" type="button">Exit replay</button></div>
       <div class="digital-twin-head">
         <div>
           <h2>Digital Twin — Engineering Simulation &amp; Assembly Lab <span class="live-pill"><span></span> Live Telemetry</span></h2>

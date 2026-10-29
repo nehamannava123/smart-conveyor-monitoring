@@ -92,25 +92,30 @@ Expensive model training is completely decoupled from application boot. Models a
 3. **Task C: Statistical Anomaly Detection**: Rolling z-score deviations measuring statistical drift against historical baselines.
 4. **Task D: Remaining Useful Life (RUL)**: Treated strictly as a future capability requiring empirical run-to-failure degradation curves. HillGuard does **not** fabricate an arbitrary countdown or present a risk score as RUL.
 
-### 3.2 Evaluation Benchmarks & Metrics (Seed = 42, 80/20 Chronological Split)
-All candidate models are evaluated against defensible baseline benchmarks:
+### 3.2 Evaluation Benchmarks & Metrics (Bundled artifact: seed 42, 25,000 synthetic scenarios)
+Metrics below are calculated on a deterministic 20% held-out synthetic set. They describe agreement with the synthetic scenario labels only; they are not field performance estimates. Values are read from the bundled `data/models/model-artifact.json` and may change when the model is retrained.
 
 | Model / Baseline | Accuracy | Precision | Recall | F1 Score | ROC-AUC | Brier Score | Status |
-|---|---|---|---|---|---|---|---|
-| **Majority Class Prior Baseline** | 90.4% | 0.0% | 0.0% | 0.0% | 0.495 | 0.0942 | Baseline |
-| **Heuristic Sensor Threshold** | 91.1% | 53.1% | 62.5% | 57.4% | 0.754 | 0.0848 | Baseline |
-| **Logistic Regression (L2)** | **97.0%** | **92.3%** | **75.0%** | **82.8%** | **0.995** | **0.0219** | **Candidate** |
-| **Sparse Logistic Regression (L1)**| 95.7% | 93.4% | 59.4% | 72.6% | 0.991 | 0.0271 | Candidate |
-| **Decision Tree Classifier** | 96.7% | 90.9% | 72.9% | 80.9% | 0.985 | 0.0242 | Candidate |
-| **Random Forest Ensemble** | **97.6%** | **90.9%** | **83.3%** | **87.0%** | **0.992** | **0.0204** | **Top Performer** |
-| **Gradient Boosting** | 94.3% | 81.0% | 53.1% | 64.2% | 0.936 | 0.0518 | Candidate |
-| **Multi-Model Ensemble** | 96.3% | 91.5% | 67.7% | 77.8% | 0.993 | 0.0262 | Candidate |
+|---|---:|---:|---:|---:|---:|---:|---|
+| Logistic Regression (L2) | 97.1% | 91.3% | 74.9% | 82.3% | 0.992 | 0.0224 | Candidate |
+| Sparse Logistic Regression (L1) | 95.9% | 92.6% | 59.2% | 72.2% | 0.986 | 0.0273 | Candidate |
+| Decision Tree Classifier | 96.7% | 88.4% | 72.0% | 79.4% | 0.977 | 0.0262 | Candidate |
+| Random Forest | 96.4% | 83.3% | 74.9% | 78.9% | 0.982 | 0.0247 | Candidate |
+| Gradient Boosting | 94.3% | 73.5% | 56.5% | 63.9% | 0.912 | 0.0525 | Candidate |
+| Physics-Informed Hybrid | 96.4% | 84.6% | 72.4% | 78.0% | 0.990 | 0.0244 | Candidate |
+| Multi-Model Ensemble | 96.8% | 87.2% | 74.7% | 80.4% | 0.988 | 0.0259 | Candidate |
+| Isolation Forest (anomaly task) | 94.1% | 93.2% | 89.8% | 91.5% | 0.982 | 0.1809 | Anomaly model |
+| Neural Autoencoder (anomaly task) | 98.9% | 97.9% | 99.1% | 98.5% | 0.995 | 0.1496 | Anomaly model |
 
 ### 3.3 Synthetic Data Provenance vs. Field Validation
 - **Synthetic Training Data**: The training dataset is derived from parameterized physics models incorporating terrain grade, curvature, friction, and tension dynamics.
-- **Limitation**: While synthetic validation confirms algorithmic convergence, feature separability, and absence of target leakage, **it does not constitute empirical field proof**. Operational deployment on real conveyor assets requires fine-tuning against empirical sensor logs and maintenance records.
+- **Limitation**: Synthetic labels are generated from the same scenario rules that produce sensor perturbations. Models can learn those rules, so strong held-out metrics do not establish real-world generalization. The bundled CSV is independently generated synthetic scenarios with simulated timestamps, not continuous field telemetry. Validate against independently labeled sensor histories and maintenance outcomes before operational use.
 
 ---
+
+
+### 3.4 Included Dataset
+The repository includes `data/datasets/conveyor_synthetic_25000_seed42.csv` with 25,000 labeled synthetic rows, raw sensor channels, derived features, fault classes, anomaly labels, synthetic 10-minute hazard labels, and a reproducible 80/20 candidate partition column. See `data/datasets/README.md` and `metadata.json` for provenance, class distribution, column definitions, and limitations. Regenerate with `npm run dataset:generate -- 25000 42`. Do not describe these rows as field data.
 
 ## 4. Maintenance Workflows & Operations
 
@@ -174,10 +179,13 @@ Storage is managed by a hardened JSON persistence engine (`server/config/db.js`)
 npm install
 
 # 2. Retrain or verify ML model artifacts (optional, artifact is pre-bundled)
-npm run train:ml
+npm run train:ml -- 25000 42
 
 # 3. Run automated test suite
 npm test
+
+# Optional: generate 25,000 labeled synthetic rows (seed 42)
+npm run dataset:generate -- 25000 42
 
 # 4. Start the server in development mode
 npm start
@@ -210,7 +218,7 @@ HillGuard includes a native test suite run via Node's built-in runner (`node:tes
 npm test
 ```
 
-### Verified Test Suites (33/33 Passing)
+### Test coverage (run `npm test` in an environment with dependencies installed)
 1. **`tests/auth_security.test.js`**: Password complexity, credential verification, case-normalization, JWT HS256 algorithm enforcement, and RBAC middleware.
 2. **`tests/persistence.test.js`**: Atomic write integrity, data survival across restarts, and corruption recovery from `db.json.bak`.
 3. **`tests/ml_pipeline.test.js`**: Feature extraction consistency, data quality checks (stale/missing sensors), explainability output, multi-task separation (10m hazard forecasting, unsupervised anomaly detection, fault classification), Isolation Forest path lengths, Neural Autoencoder reconstruction residuals, Physics-Informed CEMA mechanical constraints, and candidate evaluation audit.
@@ -221,6 +229,7 @@ npm test
 8. **`tests/frontend_integrity.test.js`**: Command-center and sensor snapshot elements are present; dynamically generated controls comply with the strict Content Security Policy.
 9. **`tests/simulator_reset.test.js`**: Verifies reset clears in-memory simulator fault state and returns stopped-zone readings to a safe baseline.
 10. **`tests/twin_physics.test.js`**: CEMA 7th Ed. / ISO 5048 physical formulas, downhill regenerative power detection, Euler capstan slip margins, threshold violation alarms, comparative deltas, and `/api/twin/*` HTTP CRUD endpoints.
+11. **`tests/operations_features.test.js`**: risk explainability evidence, held-out model evaluation diagnostics, digital-twin zone mapping, and committed artifact diagnostics.
 
 
 
@@ -230,4 +239,4 @@ npm test
 - The selected zone shows a live six-channel sensor snapshot (alignment, vibration, tension, slip, material load, and motor temperature) using thresholds aligned to the risk engine. Historical charts use stored/live readings rather than fabricated sample points.
 - Alerts, zone controls, work orders, asset maintenance, and audit refreshes are synchronized through the shared API and Socket.IO events. Asset creation is available to Admins; maintenance logging and work-order progression are available to Operators/Admins, with Viewer access remaining read-only.
 - Dynamic work-order and saved-scenario actions use delegated event listeners so they work with the strict CSP instead of relying on blocked inline event-handler attributes.
-- The simulator is the current telemetry source unless a physical sensor adapter is separately integrated. ML artifacts are trained/evaluated on synthetic data and are not field-validated safety equipment.
+- The simulator is the current telemetry source unless a physical sensor adapter is separately integrated. ML artifacts are trained/evaluated on synthetic data and are not field-validated safety equipment. The latest focused test run passed 18 tests; full-suite execution in this environment was blocked by unavailable npm dependencies. See `FINAL-VERIFICATION-STATUS.md`.

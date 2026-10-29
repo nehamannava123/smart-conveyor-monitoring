@@ -107,7 +107,9 @@ function computeRisk(zone, reading) {
     };
   }
 
-  const history = db.getReadings(zone.id, 30);
+  // Exclude the exact reading being evaluated when it has already been persisted;
+  // this keeps point-in-time scoring stable between pre-save and post-save calls.
+  const history = db.getReadings(zone.id, 30).filter((h) => Number(h.ts) !== Number(reading.ts));
 
   const inclineFactor = Math.abs(zone.inclineDeg || 0) / 25;
   const curveFactor = zone.curveSeverity || 0;
@@ -177,14 +179,26 @@ function computeRisk(zone, reading) {
   if (score >= 70 || worstChannelScore >= 80) level = LEVELS.CRITICAL;
   else if (score >= 40 || worstChannelScore >= 45) level = LEVELS.WARNING;
 
+  // Keep the complete evidence behind every score so operators can audit the
+  // reading, threshold, anomaly boost, terrain weighting and final contribution.
   const contributors = [
-    { key: 'alignment', label: 'Belt mistracking', score: Math.round(alignmentScore), ruleScore: Math.round(alignmentRule), anomalyScore: Math.round(alignmentAnomaly) },
-    { key: 'vibration', label: 'Structural vibration', score: Math.round(vibrationScore), ruleScore: Math.round(vibrationRule), anomalyScore: Math.round(vibrationAnomaly) },
-    { key: 'slip', label: 'Drive slippage', score: Math.round(slipScore), ruleScore: Math.round(slipRule), anomalyScore: Math.round(slipAnomaly) },
-    { key: 'tension', label: 'Tension loss', score: Math.round(tensionScore), ruleScore: Math.round(tensionRule), anomalyScore: 0 },
-    { key: 'load', label: 'Material imbalance', score: Math.round(loadScore), ruleScore: Math.round(loadRule), anomalyScore: 0 },
-    { key: 'temp', label: 'Motor overheating', score: Math.round(tempScore), ruleScore: Math.round(tempRule), anomalyScore: 0 }
-  ].sort((a, b) => b.score - a.score);
+    { key: 'alignment', label: 'Belt mistracking', value: alignmentAbs, signedValue: reading.alignmentMm ?? 0, readingUnit: 'mm', unit: THRESHOLDS.alignment.unit, warnAt: THRESHOLDS.alignment.warn, critAt: THRESHOLDS.alignment.crit, score: alignmentScore, ruleScore: alignmentRule, anomalyScore: alignmentAnomaly, weight: weights.alignment },
+    { key: 'vibration', label: 'Structural vibration', value: vibrationMms, signedValue: reading.vibrationMms ?? 0, readingUnit: 'mm/s', unit: THRESHOLDS.vibration.unit, warnAt: THRESHOLDS.vibration.warn, critAt: THRESHOLDS.vibration.crit, score: vibrationScore, ruleScore: vibrationRule, anomalyScore: vibrationAnomaly, weight: weights.vibration },
+    { key: 'slip', label: 'Drive slippage', value: slipPct, signedValue: reading.slipPct ?? 0, readingUnit: '%', unit: THRESHOLDS.slip.unit, warnAt: THRESHOLDS.slip.warn, critAt: THRESHOLDS.slip.crit, score: slipScore, ruleScore: slipRule, anomalyScore: slipAnomaly, weight: weights.slip },
+    { key: 'tension', label: 'Tension loss', value: tensionDeficit, signedValue: reading.tensionPct ?? 90, readingUnit: '% tension', unit: THRESHOLDS.tension.unit, warnAt: THRESHOLDS.tension.warn, critAt: THRESHOLDS.tension.crit, score: tensionScore, ruleScore: tensionRule, anomalyScore: 0, weight: weights.tension, note: 'Deficit is calculated as max(0, 90% - measured tension).' },
+    { key: 'load', label: 'Material imbalance', value: loadExcess, signedValue: reading.loadPct ?? 50, readingUnit: '% capacity', unit: THRESHOLDS.load.unit, warnAt: THRESHOLDS.load.warn, critAt: THRESHOLDS.load.crit, score: loadScore, ruleScore: loadRule, anomalyScore: 0, weight: weights.load, note: 'Excess is calculated as max(0, measured load - 90%).' },
+    { key: 'temp', label: 'Motor overheating', value: tempExcess, signedValue: reading.tempC ?? 45, readingUnit: '°C', unit: THRESHOLDS.temp.unit, warnAt: THRESHOLDS.temp.warn, critAt: THRESHOLDS.temp.crit, score: tempScore, ruleScore: tempRule, anomalyScore: 0, weight: weights.temp, note: 'Excess is calculated as max(0, measured temperature - 65°C).' }
+  ].map((c) => ({
+    ...c,
+    score: Math.round(c.score),
+    readingValue: c.signedValue,
+    ruleScore: Math.round(c.ruleScore),
+    anomalyScore: Math.round(c.anomalyScore),
+    normalizedWeight: Number((c.weight / wSum).toFixed(4)),
+    weightedContribution: Number((c.score * c.weight / wSum).toFixed(2)),
+    thresholdState: c.value >= c.critAt ? 'CRITICAL_THRESHOLD_REACHED' : c.value >= c.warnAt ? 'WARNING_THRESHOLD_REACHED' : 'WITHIN_CONFIGURED_BAND',
+    triggerReason: c.value >= c.critAt ? `Measured ${c.value.toFixed(2)} ${c.unit} reached/exceeded critical threshold ${c.critAt} ${c.unit}` : c.value >= c.warnAt ? `Measured ${c.value.toFixed(2)} ${c.unit} reached/exceeded warning threshold ${c.warnAt} ${c.unit}` : c.anomalyScore > 0 ? `Statistical deviation contributed an anomaly boost of ${Math.round(c.anomalyScore)} points` : `Measured ${c.value.toFixed(2)} ${c.unit} is below the configured warning threshold ${c.warnAt} ${c.unit}`
+  })).sort((a, b) => b.score - a.score);
 
   return {
     score,
@@ -192,6 +206,9 @@ function computeRisk(zone, reading) {
     primaryCause: contributors[0].label,
     primaryCauseKey: contributors[0].key,
     deterministicScore: Math.round(worstChannelScore),
+    scoreMethod: { formula: 'round(clamp(0.40 × weightedAverage + 0.60 × worstChannelScore, 0, 100))', weightedAverage: Number(weightedAvg.toFixed(3)), worstChannelScore: Number(worstChannelScore.toFixed(3)), thresholdBands: { warningScore: 40, criticalScore: 70 }, levelDecision: level === LEVELS.CRITICAL ? 'score ≥ 70 or worst channel ≥ 80' : level === LEVELS.WARNING ? 'score ≥ 40 or worst channel ≥ 45' : 'score < 40 and worst channel < 45' },
+    thresholds: THRESHOLDS,
+    terrain: { inclineDeg: zone.inclineDeg || 0, curveSeverity: curveFactor, weights },
     contributors,
     recommendedActions: recommendedActions(contributors[0].key),
     evaluatedAt: new Date().toISOString()

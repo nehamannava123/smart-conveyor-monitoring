@@ -8,6 +8,11 @@
   let alignChart = null;
   const historyBuffers = {}; // zoneId -> {labels:[], align:[], vib:[], risk:[]}
   let modelMetrics = null;
+  let historyReplayRows = [];
+  let historyReplayIndex = 0;
+  let replayCharts = [];
+  let investigationAlerts = [];
+  let replayTwinOverride = null;
 
   const $ = (sel) => document.querySelector(sel);
   const esc = (v) => String(v ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -304,6 +309,7 @@
       renderDashboardOverview();
       populateWhatIfZoneSelect();
       populateModelZoneSelect();
+      populateOpsZoneSelects();
       renderTerrain();
       renderZoneCards();
       renderDigitalTwin(twinView);
@@ -336,16 +342,18 @@
       } else if (selectedZoneId) {
         renderDetail(selectedZoneId);
         if (document.querySelector('.layout')?.dataset.currentPage === 'models') renderModelCards();
+        if (document.querySelector('.layout')?.dataset.currentPage === 'risk') renderRiskExplainability();
       }
     });
 
     socket.on('alert:new', (alert) => {
       prependAlert(alert);
+      if (document.querySelector('.layout')?.dataset.currentPage === 'investigation') loadInvestigationList();
     });
     socket.on('alert:updated', () => loadAlerts());
     socket.on('automation:action', () => { loadZones(); });
-    socket.on('workorder:new', () => loadWorkOrders());
-    socket.on('workorder:updated', () => loadWorkOrders());
+    socket.on('workorder:new', () => { loadWorkOrders(); if (document.querySelector('.layout')?.dataset.currentPage === 'investigation') loadInvestigationList(); });
+    socket.on('workorder:updated', () => { loadWorkOrders(); if (document.querySelector('.layout')?.dataset.currentPage === 'investigation') loadInvestigationList(); });
     socket.on('assets:updated', () => loadAssets());
     socket.on('audit:updated', () => { if (document.querySelector('.side-nav [data-page="audit"]')?.classList.contains('active')) loadAudit(); });
 
@@ -416,6 +424,7 @@
     renderDashboardOverview();
     populateWhatIfZoneSelect();
     populateModelZoneSelect();
+    populateOpsZoneSelects();
     renderTerrain();
     renderZoneCards();
     if (!selectedZoneId && zones.length) {
@@ -424,6 +433,8 @@
       renderDetail(selectedZoneId);
     }
     loadAlerts();
+    if (document.querySelector('.side-nav [data-page="risk"]')?.classList.contains('active')) renderRiskExplainability();
+    if (document.querySelector('.side-nav [data-page="sensorhealth"]')?.classList.contains('active')) loadSensorHealth();
   }
 
   const alertsById = new Map();
@@ -1201,7 +1212,7 @@
     return { code: parts[0] || `Zone ${i + 1}`, name: parts[1] || 'Section' };
   }
   function twinSensorValue(zone, key, fallback='—') {
-    const r = zone?.latestReading || {};
+    const r = twinReadingFor(zone);
     const values = {
       alignment: r.alignmentMm != null ? `${Number(r.alignmentMm).toFixed(2)} mm` : fallback,
       vibration: r.vibrationMms != null ? `${Number(r.vibrationMms).toFixed(2)} mm/s` : fallback,
@@ -1232,11 +1243,18 @@
     return zones.map((z, i) => ({ x: pad + i * step, y: Math.max(115, Math.min(290, 255 - ((Number(z.inclineDeg) || 0) * 2) + [0, 12, -10, -22, -5, 15][i % 6])) }));
   }
 
+  function twinReadingFor(zone) {
+    return replayTwinOverride && zone?.id === replayTwinOverride.zoneId ? replayTwinOverride.reading : (zone?.latestReading || {});
+  }
+  function twinRiskFor(zone) {
+    return replayTwinOverride && zone?.id === replayTwinOverride.zoneId ? (replayTwinOverride.risk || {level:'UNKNOWN',score:0}) : {level:zone?.riskLevel || 'NORMAL',score:zone?.riskScore ?? 0};
+  }
+
   function updateComponentInspector(compId) {
     const comp = TWIN_COMPONENTS.find(c => c.id === compId) || TWIN_COMPONENTS[0];
     selectedTwinComponent = comp.id;
     const z = zones.find(x => x.id === comp.zoneId) || zones[0] || {};
-    const reading = z.latestReading || {};
+    const reading = twinReadingFor(z);
 
     $('#inspectorTag').textContent = comp.tag;
     $('#inspectorName').textContent = comp.name;
@@ -1261,8 +1279,8 @@
 
     const statusEl = $('#inspectorStatus');
     if (statusEl) {
-      const isCritical = z.riskLevel === 'CRITICAL';
-      const isWarning = z.riskLevel === 'WARNING';
+      const isCritical = twinRiskFor(z).level === 'CRITICAL';
+      const isWarning = twinRiskFor(z).level === 'WARNING';
       statusEl.textContent = isCritical ? 'CRITICAL FAULT' : isWarning ? 'WARNING THRESHOLD' : 'NOMINAL';
       statusEl.style.color = isCritical ? 'var(--accent-red)' : isWarning ? 'var(--accent-amber)' : 'var(--accent-cyan)';
     }
@@ -1303,12 +1321,12 @@
   function renderTwinChips(active) {
     const wrap = $('#twinZoneChips');
     if (!wrap) return;
-    const sig = zones.map(z => `${z.id}|${z.riskLevel}|${Math.round(z.riskScore || 0)}`).join(';') + '@' + active;
+    const sig = zones.map(z => `${z.id}|${twinRiskFor(z).level}|${Math.round(twinRiskFor(z).score || 0)}`).join(';') + '@' + active + (replayTwinOverride ? `@replay:${replayTwinOverride.reading?.ts}` : '');
     if (wrap.dataset.sig === sig) return;
     wrap.dataset.sig = sig;
     wrap.innerHTML = zones.map((z, i) => {
       const l = twinZoneLabel(z, i);
-      return `<button type="button" class="twin-chip${z.id === active ? ' active' : ''}" data-twin-chip="${esc(z.id)}" aria-pressed="${z.id === active}"><i style="background:${twinRiskVar(z.riskLevel)}"></i><b>${esc(l.code)}</b><small>${esc(l.name)}</small><em>${Number(z.riskScore ?? 0)}</em></button>`;
+      return `<button type="button" class="twin-chip${z.id === active ? ' active' : ''}" data-twin-chip="${esc(z.id)}" aria-pressed="${z.id === active}"><i style="background:${twinRiskVar(twinRiskFor(z).level)}"></i><b>${esc(l.code)}</b><small>${esc(l.name)}</small><em>${Number(twinRiskFor(z).score ?? z.riskScore ?? 0)}</em></button>`;
     }).join('');
   }
 
@@ -1318,11 +1336,11 @@
     const comp = compId ? TWIN_COMPONENTS.find(c => c.id === compId) : null;
     const z = zones.find(x => x.id === (zoneId || comp?.zoneId));
     if (!z) return '';
-    const lvl = z.riskLevel || 'NORMAL';
+    const lvl = twinRiskFor(z).level || 'NORMAL';
     const row = (k, key) => `<span>${k}</span><b>${twinSensorValue(z, key)}</b>`;
     return `<div class="tt-title">${esc(comp ? comp.name : z.name)}</div>
       ${comp ? `<div class="tt-sub">${esc(comp.tag)} · ${esc(z.name)}</div>` : ''}
-      <div class="tt-risk" style="color:${twinRiskVar(lvl)}">${esc(lvl)} · risk ${Number(z.riskScore ?? 0)}/100</div>
+      <div class="tt-risk" style="color:${twinRiskVar(lvl)}">${esc(lvl)} · risk ${Number(twinRiskFor(z).score ?? z.riskScore ?? 0)}/100</div>
       <div class="tt-grid">${row('Alignment','alignment')}${row('Vibration','vibration')}${row('Tension','tension')}${row('Slip','slip')}${row('Load','load')}${row('Temp','temp')}</div>
       <div class="tt-hint">Click to ${comp ? 'inspect component' : 'select zone'}</div>`;
   }
@@ -1360,7 +1378,7 @@
     // Top view: belt centreline visibly drifts with each zone's measured alignment error.
     const pts = base.map((p, i) => {
       if (mode !== 'top') return p;
-      const d = Math.max(-26, Math.min(26, Number(zones[i]?.latestReading?.alignmentMm || 0) * 0.9));
+      const d = Math.max(-26, Math.min(26, Number(twinReadingFor(zones[i])?.alignmentMm || 0) * 0.9));
       return { x: p.x, y: p.y + d };
     });
     const n = pts.length;
@@ -1409,7 +1427,7 @@
     html += `<path d="${path}" class="twin-belt-shadow"/>`;
     zones.forEach((z, i) => {
       if (!pts[i]) return;
-      const lvl = z.riskLevel || 'NORMAL', sel = z.id === active;
+      const lvl = twinRiskFor(z).level || 'NORMAL', sel = z.id === active;
       html += `<path d="${span(i)}" class="twin-zone-span${sel ? ' selected' : ''}" style="stroke:${twinRiskVar(lvl)}" stroke-opacity="${sel ? .55 : lvl === 'NORMAL' ? .16 : .38}"/>`;
     });
     html += `<path d="${path}" class="twin-belt"/><path d="${path}" class="twin-belt-inner"/>
@@ -1423,7 +1441,7 @@
 
     // Payload moving along the belt (continuous phase across re-renders)
     const avgSpeed = zones.reduce((s, z) => s + twinSpeed(z), 0) / zones.length;
-    const avgLoad = zones.reduce((s, z) => s + (Number(z.latestReading?.loadPct) || 60), 0) / zones.length;
+    const avgLoad = zones.reduce((s, z) => s + (Number(twinReadingFor(z)?.loadPct) || 60), 0) / zones.length;
     let len = 0; for (let i = 1; i < n; i++) len += Math.hypot(pts[i].x - pts[i - 1].x, pts[i].y - pts[i - 1].y);
     const dur = Math.max(3, len / (avgSpeed * FLOW_K));
     const cnt = Math.max(4, Math.min(14, Math.round(avgLoad / 10)));
@@ -1439,9 +1457,9 @@
       if (zi < 0 || !pts[zi]) return;
       const z = zones[zi], list = perZone[comp.zoneId], k = list.indexOf(comp);
       const cx = pts[zi].x + (k - (list.length - 1) / 2) * 50, cy = pts[zi].y + 36;
-      const lvl = z.riskLevel || 'NORMAL', color = twinRiskVar(lvl);
+      const lvl = twinRiskFor(z).level || 'NORMAL', color = twinRiskVar(lvl);
       const selected = comp.id === selectedTwinComponent;
-      const r = z.latestReading || {};
+      const r = twinReadingFor(z) || {};
       const cls = ['twin-component-node', Number(r.vibrationMms) > 4.5 ? 'twin-shake' : '', Number(r.tempC) > 85 ? 'twin-hot' : ''].join(' ').trim();
       const spin = (6 / twinSpeed(z)).toFixed(2);
       html += `<g class="${cls}" data-comp-id="${esc(comp.id)}" tabindex="0" role="button" aria-label="Inspect ${esc(comp.name)} in ${esc(z.name)}">
@@ -1453,14 +1471,15 @@
     // Zone markers and labels
     zones.forEach((z, i) => {
       const p = pts[i]; if (!p) return;
-      const lvl = z.riskLevel || 'NORMAL', c = twinRiskVar(lvl), labels = twinZoneLabel(z, i), sel = z.id === active;
+      const twinRisk = twinRiskFor(z);
+      const lvl = twinRisk.level || 'NORMAL', c = twinRiskVar(lvl), labels = twinZoneLabel(z, i), sel = z.id === active;
       const boxY = Math.max(36, p.y - 78);
       html += `<g class="twin-zone-node${sel ? ' selected' : ''}" data-twin-zone="${esc(z.id)}" tabindex="0" role="button" aria-label="Select ${esc(z.name)}, risk ${esc(lvl)}">
         <line x1="${p.x}" y1="${boxY + 46}" x2="${p.x}" y2="${p.y - 12}" class="twin-zone-line"/>
         <rect x="${p.x - 63}" y="${boxY}" width="126" height="46" rx="7" class="twin-label-box${sel ? ' selected' : ''}"/>
         <text x="${p.x}" y="${boxY + 15}" class="twin-zone-text" style="fill:${c}">${esc(labels.code)}</text>
         <text x="${p.x}" y="${boxY + 28}" class="twin-zone-sub">${esc(labels.name)}</text>
-        <text x="${p.x}" y="${boxY + 40}" class="twin-zone-sub">RISK ${Number(z.riskScore ?? 0)}/100 · ${esc(lvl)}</text>
+        <text x="${p.x}" y="${boxY + 40}" class="twin-zone-sub">RISK ${Number(twinRisk.score ?? z.riskScore ?? 0)}/100 · ${esc(lvl)}</text>
         ${sel ? `<circle cx="${p.x}" cy="${p.y}" r="21" fill="none" class="twin-selected-ring"/>` : ''}
         <circle cx="${p.x}" cy="${p.y}" r="${sel ? 15 : 11}" style="fill:${c}" opacity=".22" class="${lvl === 'CRITICAL' ? 'twin-marker-pulse' : ''}"/>
         <circle cx="${p.x}" cy="${p.y}" r="${sel ? 8 : 7}" style="fill:${c}" class="twin-marker" filter="url(#twinGlow)"/>
@@ -1818,6 +1837,126 @@
     loadSavedScenarios();
   };
 
+  function populateOpsZoneSelects() {
+    ['riskExplainZone','historyZoneSelect'].forEach(id => {
+      const select = document.getElementById(id);
+      if (!select) return;
+      const previous = select.value || selectedZoneId;
+      select.innerHTML = zones.map(z => `<option value="${esc(z.id)}">${esc(z.name || z.id)}</option>`).join('');
+      if (zones.some(z => z.id === previous)) select.value = previous;
+    });
+  }
+
+  function opsStat(label, value, note='') {
+    return `<div class="ops-stat"><small>${esc(label)}</small><strong>${esc(value)}</strong><span>${esc(note)}</span></div>`;
+  }
+  function opsStatus(value) {
+    const s = String(value || 'UNKNOWN').toUpperCase();
+    const cls = ['ONLINE','NORMAL','RESOLVED','CLOSED','HEALTHY'].includes(s) ? 'good' : ['WARNING','STALE','ACKNOWLEDGED','NOT_CONFIGURED'].includes(s) ? 'warn' : 'bad';
+    return `<span class="ops-pill ${cls}">${esc(s.replaceAll('_',' '))}</span>`;
+  }
+  function latestZone(id) { return zones.find(z => z.id === id) || zones[0] || null; }
+
+  function renderRiskExplainability() {
+    const id = $('#riskExplainZone')?.value || selectedZoneId;
+    const zone = latestZone(id);
+    const summary = $('#riskExplainSummary'), evidence = $('#riskExplainEvidence'), actions = $('#riskExplainActions');
+    if (!zone || !summary || !evidence || !actions) return;
+    const risk = zone.latestRisk || {};
+    const reading = zone.latestReading || {};
+    summary.innerHTML = opsStat('Risk score', `${risk.score ?? zone.riskScore ?? '—'}/100`, '0–100 deterministic composite') + opsStat('Severity', risk.level || zone.riskLevel || 'UNKNOWN', 'Threshold-based decision') + opsStat('Dominant cause', risk.primaryCause || 'None', 'Highest individual channel score') + opsStat('Sample timestamp', reading.ts ? new Date(reading.ts).toLocaleString() : 'No sample', 'Latest retained reading');
+    const contributors = Array.isArray(risk.contributors) ? risk.contributors : [];
+    evidence.innerHTML = `<table class="ops-table"><thead><tr><th>Channel / cause</th><th>Measured value</th><th>Warning</th><th>Critical</th><th>Rule score</th><th>Anomaly boost</th><th>Normalized weight</th><th>Weighted contribution</th><th>Reason</th></tr></thead><tbody>${contributors.map(c => `<tr><td><strong>${esc(c.label)}</strong><br><small>${esc(c.key)}</small></td><td>${Number(c.readingValue ?? c.signedValue ?? c.value ?? 0).toFixed(2)} ${esc(c.readingUnit || c.unit || '')}<br><small>Scored metric: ${Number(c.value ?? 0).toFixed(2)} ${esc(c.unit || '')}</small></td><td>${c.warnAt ?? '—'} ${esc(c.unit||'')}</td><td>${c.critAt ?? '—'} ${esc(c.unit||'')}</td><td>${c.ruleScore ?? c.score ?? '—'}/100</td><td>${c.anomalyScore ?? 0}</td><td>${c.normalizedWeight ?? '—'}</td><td>${c.weightedContribution ?? '—'}</td><td>${esc(c.triggerReason || 'No trigger detail')}</td></tr>`).join('')}</tbody></table>`;
+    const method = risk.scoreMethod || {};
+    actions.innerHTML = `<h3>Severity decision and next steps</h3><div class="ops-evidence-grid"><div class="ops-evidence-item"><small>Score formula</small><strong>${esc(method.formula || 'Composite weighted score with worst-channel safeguard')}</strong></div><div class="ops-evidence-item"><small>Weighted average</small><strong>${method.weightedAverage ?? '—'}</strong></div><div class="ops-evidence-item"><small>Worst channel</small><strong>${method.worstChannelScore ?? risk.deterministicScore ?? '—'}</strong></div><div class="ops-evidence-item"><small>Severity rule</small><strong>${esc(method.levelDecision || 'Configured score and channel thresholds')}</strong></div><div class="ops-evidence-item"><small>Terrain context</small><strong>Incline ${zone.inclineDeg ?? '—'}° · curve severity ${zone.curveSeverity ?? '—'}</strong></div><div class="ops-evidence-item"><small>Evidence caveat</small><strong>Rule scores are advisory; validate thresholds against site engineering requirements.</strong></div></div><h3 style="margin-top:14px">Recommended inspection actions</h3><ol>${(risk.recommendedActions || []).map(a=>`<li>${esc(a)}</li>`).join('') || '<li>No action recommendation available.</li>'}</ol>`;
+  }
+
+  async function loadSensorHealth() {
+    const table = $('#sensorHealthTable'); if (!table) return;
+    table.innerHTML = '<p class="panel-note">Checking sensor telemetry…</p>';
+    try {
+      const res = await fetch(`${API}/api/operations/sensor-health`, { headers: authHeaders() });
+      if (!res.ok) throw new Error('Sensor-health endpoint unavailable');
+      const data = await res.json();
+      $('#sensorHealthSummary').innerHTML = opsStat('Healthy channels', `${data.healthy}/${data.total}`, `${data.healthPercent}% reporting fresh data`) + opsStat('Missing', data.counts.MISSING || 0, 'No usable reading') + opsStat('Stale', data.counts.STALE || 0, `Older than ${data.staleAfterSeconds}s`) + opsStat('Out of range', data.counts.OUT_OF_RANGE || 0, 'Physical input bounds failed');
+      $('#sensorHealthNotice').textContent = data.calibrationNotice;
+      table.innerHTML = `<table class="ops-table"><thead><tr><th>Sensor channel</th><th>Zone</th><th>Current value</th><th>Status</th><th>Last seen</th><th>Communication</th><th>Valid range</th><th>Risk thresholds</th><th>Calibration</th></tr></thead><tbody>${data.sensors.map(s=>`<tr><td><strong>${esc(s.label)}</strong><br><small>${esc(s.channel)}</small></td><td>${esc(s.zoneName)}</td><td>${s.value===null?'—':`${Number(s.value).toFixed(2)} ${esc(s.unit)}`}</td><td>${opsStatus(s.status)}</td><td>${s.lastSeen?new Date(s.lastSeen).toLocaleTimeString():'Never'}${s.ageSeconds===null?'':`<br><small>${s.ageSeconds}s old</small>`}</td><td>${opsStatus(s.communicationStatus)}</td><td>${s.validRange.min} to ${s.validRange.max} ${esc(s.unit)}</td><td>${s.warningThreshold ?? '—'} / ${s.criticalThreshold ?? '—'} ${esc(s.unit)}</td><td>${opsStatus(s.calibrationStatus)}</td></tr>`).join('')}</tbody></table>`;
+      const incidents=data.dataQualityIncidents||[];
+      $('#sensorHealthIncidents').innerHTML=incidents.length?`<table class="ops-table"><thead><tr><th>Timestamp</th><th>Zone</th><th>Channel</th><th>Incident</th><th>Severity</th><th>Details</th></tr></thead><tbody>${incidents.map(i=>`<tr><td>${new Date(i.at).toLocaleString()}</td><td>${esc(i.zoneName)}</td><td>${esc(i.channel)}</td><td>${opsStatus(i.type)}</td><td>${opsStatus(i.severity)}</td><td>${esc(i.detail)}</td></tr>`).join('')}</tbody></table>`:'<div class="ops-card">No missing, out-of-range or long-gap data-quality incidents were found in the retained history. Calibration is tracked separately and is not configured in this prototype.</div>';
+    } catch (err) { table.innerHTML = `<div class="ops-card">${esc(err.message)}. Check the backend connection and sign-in session.</div>`; }
+  }
+
+  async function loadInvestigationList() {
+    const select = $('#incidentSelect'); if (!select) return;
+    try {
+      const res = await fetch(`${API}/api/alerts?limit=200`, { headers: authHeaders() });
+      if (!res.ok) throw new Error('Could not load incident list');
+      const data = await res.json(); investigationAlerts = data.alerts || [];
+      const previous = select.value;
+      select.innerHTML = investigationAlerts.length ? investigationAlerts.map(a=>`<option value="${esc(a.id)}">${esc(a.level)} · ${esc(a.zoneName || a.zoneId)} · ${new Date(a.createdAt).toLocaleString()} · ${esc(a.cause || a.message)}</option>`).join('') : '<option value="">No incidents recorded yet</option>';
+      if (investigationAlerts.some(a=>a.id===previous)) select.value = previous;
+      if (select.value) await loadIncidentInvestigation(select.value);
+      else $('#incidentInvestigationContent').innerHTML = '<div class="ops-card">No incidents are available. Incidents appear when the risk engine raises a non-normal alert.</div>';
+    } catch (err) { $('#incidentInvestigationContent').innerHTML = `<div class="ops-card">${esc(err.message)}</div>`; }
+  }
+
+  async function loadIncidentInvestigation(id) {
+    const wrap = $('#incidentInvestigationContent'); if (!wrap || !id) return;
+    wrap.innerHTML = '<p class="panel-note">Loading incident evidence…</p>';
+    try {
+      const res = await fetch(`${API}/api/operations/incident/${encodeURIComponent(id)}`, { headers: authHeaders() });
+      const data = await res.json(); if (!res.ok) throw new Error(data.error || 'Could not load incident');
+      const a=data.incident, risk=data.riskEvidence || {}, ml=data.modelPrediction || {}, wo=data.workOrder;
+      const snapshot=a.snapshot || {};
+      const readings=data.readings || [];
+      const actions=a.recommendedActions || risk.recommendedActions || [];
+      wrap.innerHTML = `<div class="ops-summary-grid">${opsStat('Incident severity',a.level,`Risk score ${a.score ?? risk.score ?? '—'}/100`)}${opsStat('Zone',data.zone?.name || a.zoneName || a.zoneId,'Equipment location')}${opsStat('Status',a.status,'Acknowledgement / resolution lifecycle')}${opsStat('Related work order',wo?.id || a.workOrderId || 'Not linked',wo?.status || 'No work order linked')}</div><div class="ops-card"><h3>Incident evidence</h3><p><strong>${esc(a.cause || a.message || 'Unknown fault')}</strong></p><p>${esc(a.message || '')}</p><div class="ops-evidence-grid">${Object.entries({ 'Belt alignment':`${snapshot.alignmentMm ?? '—'} mm`, 'Vibration RMS':`${snapshot.vibrationMms ?? '—'} mm/s`, 'Tension':`${snapshot.tensionPct ?? '—'} %`, 'Drive slip':`${snapshot.slipPct ?? '—'} %`, 'Load':`${snapshot.loadPct ?? '—'} %`, 'Temperature':`${snapshot.tempC ?? '—'} °C`}).map(([k,v])=>`<div class="ops-evidence-item"><small>${esc(k)}</small><strong>${esc(v)}</strong></div>`).join('')}</div><p class="panel-note">Created ${new Date(a.createdAt).toLocaleString()} · ${readings.length} nearby retained readings available</p></div><div class="ops-card"><h3>Probable cause and model assessment</h3><p>Rule engine: <strong>${esc(risk.primaryCause || a.cause || 'Not available')}</strong>, score ${risk.score ?? a.score ?? '—'}/100 (${esc(risk.level || a.level)}).</p><p>ML status: <strong>${esc(ml.status || (ml.ready ? 'READY' : 'UNAVAILABLE'))}</strong> · hazard probability ${ml.probability===undefined?'not available':`${(Number(ml.probability)*100).toFixed(1)}%`}.</p><p>${esc(ml.notice || data.diagnosisNotice || 'ML outputs are advisory and depend on valid input data.')}</p><p><strong>Alternative explanations to inspect:</strong> sensor miscalibration, transient material loading, bearing wear, pulley contamination, and mechanical alignment. These are investigation hypotheses, not confirmed causes.</p></div>${wo ? `<div class="ops-card"><h3>Maintenance outcome &amp; post-repair verification</h3><p>Work order ${esc(wo.id)} · ${esc(wo.status)}. Compare the triggering snapshot with the latest retained reading after inspection or repair.</p><div class="ops-evidence-grid">${[['Alignment',snapshot.alignmentMm,data.latestReading?.alignmentMm,'mm'],['Vibration',snapshot.vibrationMms,data.latestReading?.vibrationMms,'mm/s'],['Tension',snapshot.tensionPct,data.latestReading?.tensionPct,'%'],['Slip',snapshot.slipPct,data.latestReading?.slipPct,'%'],['Load',snapshot.loadPct,data.latestReading?.loadPct,'%'],['Temperature',snapshot.tempC,data.latestReading?.tempC,'°C']].map(([k,before,after,u])=>`<div class="ops-evidence-item"><small>${k}: incident → latest</small><strong>${before ?? '—'} → ${after ?? '—'} ${u}</strong></div>`).join('')}</div>${user?.role!=='VIEWER'?`<label style="display:block;margin-top:10px">Repair / inspection notes<textarea id="incidentRepairNotes" rows="3" style="display:block;width:100%;margin-top:5px">${esc(wo.repairNotes || '')}</textarea></label><button class="btn btn-secondary btn-sm" id="saveIncidentRepairNotes" type="button">Save maintenance notes</button>`:''}</div>`:''}<div class="ops-card"><h3>Recommended inspection</h3><ol>${actions.map(x=>`<li>${esc(x)}</li>`).join('') || '<li>Follow the site standard inspection checklist.</li>'}</ol><div class="ops-inline-actions">${!wo && user?.role!=='VIEWER'?'<button class="btn btn-primary btn-sm" id="createIncidentWorkOrder" type="button">Create linked work order</button>':''}${a.status==='OPEN' && user?.role!=='VIEWER'?'<button class="btn btn-secondary btn-sm" id="ackIncidentBtn" type="button">Acknowledge incident</button>':''}</div></div><div class="ops-card"><h3>Event timeline</h3><div class="ops-table-wrap"><table class="ops-table"><thead><tr><th>Timestamp</th><th>Alignment</th><th>Vibration</th><th>Tension</th><th>Slip</th><th>Load</th><th>Temp</th><th>Stored risk</th></tr></thead><tbody>${readings.map(r=>`<tr><td>${r.ts?new Date(r.ts).toLocaleTimeString():'—'}</td><td>${r.alignmentMm ?? '—'} mm</td><td>${r.vibrationMms ?? '—'} mm/s</td><td>${r.tensionPct ?? '—'}%</td><td>${r.slipPct ?? '—'}%</td><td>${r.loadPct ?? '—'}%</td><td>${r.tempC ?? '—'}°C</td><td>${r.risk?.score===undefined?'—':`${r.risk.score} (${esc(r.risk.level)})`}</td></tr>`).join('')}</tbody></table></div></div>`;
+      $('#createIncidentWorkOrder')?.addEventListener('click', async()=>{
+        try { const r=await fetch(`${API}/api/work-orders`,{method:'POST',headers:{...authHeaders(),'Content-Type':'application/json'},body:JSON.stringify({zoneId:a.zoneId,title:`Investigate ${a.cause || 'conveyor incident'}`,description:`Created from incident ${a.id}. Review sensor snapshot, alternate causes, inspect equipment and record post-repair readings.`,priority:a.level==='CRITICAL'?'CRITICAL':'HIGH',severity:a.level,alertId:a.id})}); const body=await r.json(); if(!r.ok)throw new Error(body.error||'Work order creation failed'); await loadIncidentInvestigation(id); alert(`Work order created: ${body.workOrder?.id || 'success'}`); } catch(e){alert(e.message);}
+      });
+      $('#ackIncidentBtn')?.addEventListener('click', async()=>{ const r=await fetch(`${API}/api/alerts/${encodeURIComponent(a.id)}/ack`,{method:'POST',headers:authHeaders()}); if(r.ok)loadIncidentInvestigation(id); else alert('Could not acknowledge incident.'); });
+      $('#saveIncidentRepairNotes')?.addEventListener('click', async()=>{ try { const r=await fetch(`${API}/api/work-orders/${encodeURIComponent(wo.id)}`,{method:'PATCH',headers:{...authHeaders(),'Content-Type':'application/json'},body:JSON.stringify({repairNotes:$('#incidentRepairNotes').value})}); const body=await r.json(); if(!r.ok)throw new Error(body.error||'Could not save maintenance notes'); alert('Maintenance notes saved.'); } catch(e){alert(e.message);} });
+    } catch (err) { wrap.innerHTML = `<div class="ops-card">${esc(err.message)}</div>`; }
+  }
+
+  function localDateTimeInput(date) { const d=new Date(date); d.setMinutes(d.getMinutes()-d.getTimezoneOffset()); return d.toISOString().slice(0,16); }
+  async function loadHistoryReplay() {
+    const zoneId=$('#historyZoneSelect')?.value || selectedZoneId; if(!zoneId)return;
+    const fromInput=$('#historyFrom'), toInput=$('#historyTo');
+    if(fromInput && !fromInput.value) fromInput.value=localDateTimeInput(Date.now()-10*60*1000);
+    if(toInput && !toInput.value) toInput.value=localDateTimeInput(Date.now());
+    const fromDate=new Date(fromInput.value), toDate=new Date(toInput.value);
+    const wrap=$('#historyReplayChart');
+    if(!Number.isFinite(fromDate.getTime()) || !Number.isFinite(toDate.getTime()) || fromDate>toDate){ wrap.innerHTML='<div class="ops-card">Choose a valid date range where From is earlier than To.</div>'; return; }
+    const from=fromDate.toISOString(), to=toDate.toISOString(); wrap.innerHTML='<div class="ops-card">Loading retained readings…</div>';
+    try {
+      const res=await fetch(`${API}/api/operations/history/${encodeURIComponent(zoneId)}?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}&limit=500`,{headers:authHeaders()});
+      const data=await res.json(); if(!res.ok)throw new Error(data.error||'Could not load history');
+      historyReplayRows=data.readings||[]; historyReplayIndex=Math.max(0,historyReplayRows.length-1);
+      $('#historyReplayNotice').textContent=data.note || '';
+      const rows=historyReplayRows;
+      const latest=rows[rows.length-1]||{};
+      $('#historyReplaySummary').innerHTML=opsStat('Retained samples',rows.length,'Within selected range')+opsStat('Incidents in range',(data.alerts||[]).length,'Recorded alert timestamps')+opsStat('Latest stored risk',latest.risk?.score===undefined?'Unavailable':`${latest.risk.score}/100`,latest.risk?.level||'No point-in-time risk')+opsStat('Retention',`${data.retentionLimit} max`,'Rolling buffer per zone');
+      if(!rows.length){wrap.innerHTML='<div class="ops-card">No readings in this range. Choose a wider range or wait for telemetry to accumulate.</div>'; $('#historyReplayEvents').innerHTML=''; $('#historyReplayFrame').innerHTML=''; return;}
+      const chartSpecs=[['Alignment (mm)','alignmentMm'],['Vibration RMS (mm/s)','vibrationMms'],['Tension (%)','tensionPct'],['Slip (%)','slipPct'],['Load (%)','loadPct'],['Temperature (°C)','tempC'],['Risk score','risk.score']];
+      replayCharts.forEach(c=>{try{c.destroy()}catch(_){}}); replayCharts=[];
+      wrap.innerHTML=chartSpecs.map((s,i)=>`<div class="ops-chart-card"><h3>${esc(s[0])}</h3><canvas id="replayChart${i}" height="150"></canvas></div>`).join('');
+      chartSpecs.forEach((spec,i)=>{ const ctx=document.getElementById(`replayChart${i}`); const values=rows.map(r=>spec[1]==='risk.score'?(r.risk?.score ?? null):r[spec[1]]); if(window.Chart){ replayCharts.push(new Chart(ctx,{type:'line',data:{labels:rows.map(r=>new Date(r.ts).toLocaleTimeString()),datasets:[{label:spec[0],data:values,borderColor:i===6?'#d9a441':'#28b6b1',backgroundColor:'rgba(40,182,177,.12)',spanGaps:false,tension:.2,pointRadius:0}]},options:{responsive:true,animation:false,plugins:{legend:{display:false}},scales:{x:{ticks:{maxTicksLimit:6}},y:{beginAtZero:false}}}})); } else { ctx.insertAdjacentHTML('afterend','<p>Chart library unavailable; use the table below.</p>'); }});
+      const alerts=data.alerts||[];
+      $('#historyReplayEvents').innerHTML=`<table class="ops-table"><thead><tr><th>Event</th><th>Timestamp</th><th>Severity</th><th>Risk</th><th>Replay</th></tr></thead><tbody>${alerts.map(a=>{const ix=rows.reduce((best,r,i)=>Math.abs(Number(r.ts)-new Date(a.createdAt).getTime())<Math.abs(Number(rows[best]?.ts||0)-new Date(a.createdAt).getTime())?i:best,0);return `<tr><td>${esc(a.cause||a.message)}</td><td>${new Date(a.createdAt).toLocaleString()}</td><td>${opsStatus(a.level)}</td><td>${a.score ?? '—'}/100</td><td><button type="button" class="btn btn-secondary btn-sm" data-replay-index="${ix}">Replay point</button></td></tr>`}).join('') || '<tr><td colspan="5">No incidents in selected range.</td></tr>'}</tbody></table>`;
+      renderReplayFrame();
+    } catch(err) { wrap.innerHTML=`<div class="ops-card">${esc(err.message)}</div>`; }
+  }
+  function renderReplayFrame() {
+    const wrap=$('#historyReplayFrame'); if(!wrap)return;
+    const r=historyReplayRows[historyReplayIndex]; if(!r){wrap.innerHTML='';return;}
+    const risk=r.risk||{};
+    wrap.innerHTML=`<h3>Event replay · sample ${historyReplayIndex+1} of ${historyReplayRows.length}</h3><p>${r.ts?new Date(r.ts).toLocaleString():'Timestamp unavailable'} · stored risk ${risk.score===undefined?'not captured':`${risk.score}/100 (${esc(risk.level)})`}</p><div class="ops-evidence-grid">${[['Alignment',`${r.alignmentMm ?? '—'} mm`],['Vibration',`${r.vibrationMms ?? '—'} mm/s`],['Tension',`${r.tensionPct ?? '—'}%`],['Slip',`${r.slipPct ?? '—'}%`],['Load',`${r.loadPct ?? '—'}%`],['Temperature',`${r.tempC ?? '—'}°C`]].map(([k,v])=>`<div class="ops-evidence-item"><small>${k}</small><strong>${esc(v)}</strong></div>`).join('')}</div><div class="ops-inline-actions"><button class="btn btn-secondary btn-sm" id="replayPrev" type="button" ${historyReplayIndex<=0?'disabled':''}>← Previous sample</button><button class="btn btn-secondary btn-sm" id="replayNext" type="button" ${historyReplayIndex>=historyReplayRows.length-1?'disabled':''}>Next sample →</button><button class="btn btn-primary btn-sm" id="showReplayOnTwin" type="button">Show sample on Digital Twin</button><span class="panel-note">Point-in-time snapshots only; no physical machine is controlled by replay.</span></div>`;
+    $('#replayPrev')?.addEventListener('click',()=>{historyReplayIndex=Math.max(0,historyReplayIndex-1);renderReplayFrame()});
+    $('#replayNext')?.addEventListener('click',()=>{historyReplayIndex=Math.min(historyReplayRows.length-1,historyReplayIndex+1);renderReplayFrame()});
+    $('#showReplayOnTwin')?.addEventListener('click',()=>{ const z=latestZone($('#historyZoneSelect')?.value); if(!z||!r)return; replayTwinOverride={zoneId:z.id,reading:r,risk:r.risk||{level:'UNKNOWN',score:0}}; selectedZoneId=z.id; const zoneComponent=TWIN_COMPONENTS.find(c=>c.zoneId===z.id); if(zoneComponent)selectedTwinComponent=zoneComponent.id; const banner=$('#replayTwinBanner'); if(banner)banner.style.display='block'; showDashboardPage('twin'); renderDigitalTwin(twinView); updateComponentInspector(selectedTwinComponent); });
+  }
+
   function showDashboardPage(page) {
     const groups = {
       dashboard: ['dashboardOverview', 'panel-map', 'detailPanel', 'alertsPanel'],
@@ -1826,12 +1965,16 @@
       workorders: ['workOrdersPanel'],
       whatif: ['panel-map', 'whatIfPagePanel'],
       models: ['panel-map', 'modelValidationPanel'],
+      risk: ['riskExplainPanel'],
+      sensorhealth: ['sensorHealthPanel'],
+      investigation: ['investigationPanel'],
+      history: ['historyReplayPanel'],
       video: ['videoPanel'],
       alerts: ['alertsPanel'],
       audit: ['auditPanel'],
       reports: ['reportsPanel']
     };
-    const all = ['dashboardOverview','panel-map','modelValidationPanel','twinPanel','detailPanel','whatIfPagePanel','alertsPanel','auditPanel','videoPanel','reportsPanel','assetsPanel','workOrdersPanel'];
+    const all = ['dashboardOverview','panel-map','modelValidationPanel','riskExplainPanel','sensorHealthPanel','investigationPanel','historyReplayPanel','twinPanel','detailPanel','whatIfPagePanel','alertsPanel','auditPanel','videoPanel','reportsPanel','assetsPanel','workOrdersPanel'];
     all.forEach(id => {
       const el = id === 'panel-map' ? document.querySelector('.panel-map') : document.getElementById(id);
       if (el) el.classList.toggle('page-hidden', !(groups[page] || groups.dashboard).includes(id));
@@ -1862,6 +2005,10 @@
     if (page === 'models') {
       renderModelCards();
     }
+    if (page === 'risk') { populateOpsZoneSelects(); renderRiskExplainability(); }
+    if (page === 'sensorhealth') loadSensorHealth();
+    if (page === 'investigation') loadInvestigationList();
+    if (page === 'history') { populateOpsZoneSelects(); loadHistoryReplay(); }
     if (page === 'assets') loadAssets();
     if (page === 'workorders') loadWorkOrders();
     if (page === 'audit') loadAudit();
@@ -1895,6 +2042,17 @@
     });
     $('#downloadReportPageBtn')?.addEventListener('click', downloadConditionReport);
 
+    $('#riskExplainZone')?.addEventListener('change', renderRiskExplainability);
+    $('#refreshSensorHealth')?.addEventListener('click', loadSensorHealth);
+    $('#incidentSelect')?.addEventListener('change', () => loadIncidentInvestigation($('#incidentSelect').value));
+    $('#historyZoneSelect')?.addEventListener('change', loadHistoryReplay);
+    $('#loadHistoryReplay')?.addEventListener('click', loadHistoryReplay);
+    $('#exitTwinReplay')?.addEventListener('click',()=>{ replayTwinOverride=null; const banner=$('#replayTwinBanner'); if(banner)banner.style.display='none'; renderDigitalTwin(twinView); updateComponentInspector(selectedTwinComponent); });
+    $('#historyReplayEvents')?.addEventListener('click', (event) => {
+      const button = event.target.closest('[data-replay-index]');
+      if (button) { historyReplayIndex = Number(button.dataset.replayIndex) || 0; renderReplayFrame(); }
+    });
+
     setupDigitalTwinStageEvents();
     setupScenarioLab();
     $('#savedScenariosList')?.addEventListener('click', (event) => {
@@ -1910,6 +2068,10 @@
   }
   // Keep the twin animation lightweight; telemetry events also trigger immediate updates.
   let twinRenderBusy = false;
+  setInterval(() => {
+    if (!document.hidden && document.querySelector('.layout')?.dataset.currentPage === 'sensorhealth' && token) loadSensorHealth();
+  }, 10000);
+
   setInterval(() => {
     if (!zones.length || twinRenderBusy || document.hidden) return;
     twinRenderBusy = true;
@@ -2057,6 +2219,7 @@
       if (!res.ok) throw new Error('Could not load model metrics');
       modelMetrics = await res.json();
       renderModelCards();
+      renderEvaluationDiagnostics();
     } catch (err) {
       console.error('model metrics:', err.message);
       $('#modelDatasetInfo').textContent = 'Metrics unavailable';
@@ -2080,6 +2243,30 @@
     });
     if (previous && zones.some((zone) => zone.id === previous)) select.value = previous;
     else if (zones.length) select.value = zones[0].id;
+  }
+
+  function renderEvaluationDiagnostics() {
+    const select=$('#evaluationModelSelect'); const summary=$('#evaluationSummary'); const plots=$('#evaluationPlots');
+    if(!select||!summary||!plots||!modelMetrics)return;
+    const names=Object.keys(modelMetrics.models||{}); const prior=select.value;
+    select.innerHTML=names.map(n=>`<option value="${esc(n)}">${esc(n)}</option>`).join('');
+    if(names.includes(prior))select.value=prior; else select.value=names.includes('Ensemble')?'Ensemble':names[0];
+    const draw=()=>{
+      const name=select.value, m=modelMetrics.models?.[name]||{}, d=modelMetrics.diagnostics?.[name]||{};
+      summary.innerHTML=opsStat('Test samples',m.testSamples??'—','Held-out synthetic samples')+opsStat('Precision',`${m.precisionPct??m.precision??'—'}%`,'Positive prediction quality')+opsStat('Recall',`${m.recallPct??m.recall??'—'}%`,'Hazard detection sensitivity')+opsStat('False-alarm rate',`${d.falseAlarmRate??'—'}%`,'FP / (FP + TN)')+opsStat('Missed-event rate',`${d.missedEventRate??'—'}%`,'FN / (FN + TP)')+opsStat('Brier score',m.brierScore??'—','Lower is better; probability error');
+      plots.innerHTML='<div class="ops-chart-card"><h3>Confusion matrix</h3><div id="evalConfusion"></div></div><div class="ops-chart-card"><h3>Precision–recall curve</h3><canvas id="evalPRChart" height="180"></canvas></div><div class="ops-chart-card"><h3>Calibration plot</h3><canvas id="evalCalibrationChart" height="180"></canvas></div>';
+      const cm=d.confusionMatrix||{tp:m.tp,fp:m.fp,tn:m.tn,fn:m.fn};
+      $('#evalConfusion').innerHTML=`<table class="ops-table"><thead><tr><th></th><th>Predicted positive</th><th>Predicted negative</th></tr></thead><tbody><tr><th>Actual positive</th><td>${cm.tp??'—'} (TP)</td><td>${cm.fn??'—'} (FN)</td></tr><tr><th>Actual negative</th><td>${cm.fp??'—'} (FP)</td><td>${cm.tn??'—'} (TN)</td></tr></tbody></table>`;
+      if(window.Chart){
+        new Chart($('#evalPRChart'),{type:'line',data:{datasets:[{label:'Precision–recall',data:(d.precisionRecallCurve||[]).map(p=>({x:p.recall,y:p.precision})),borderColor:'#28b6b1',backgroundColor:'rgba(40,182,177,.12)',pointRadius:2,tension:.15}]},options:{responsive:true,animation:false,plugins:{legend:{display:false}},scales:{x:{type:'linear',min:0,max:1,title:{display:true,text:'Recall'}},y:{min:0,max:1,title:{display:true,text:'Precision'}}}}});
+        const bins=(d.calibrationBins||[]).filter(b=>b.count>0&&b.meanPredicted!==null&&b.observedRate!==null);
+        new Chart($('#evalCalibrationChart'),{type:'scatter',data:{datasets:[{label:'Observed vs predicted',data:bins.map(b=>({x:b.meanPredicted,y:b.observedRate})),backgroundColor:'#d9a441',pointRadius:4},{label:'Perfect calibration',type:'line',data:[{x:0,y:0},{x:1,y:1}],borderColor:'#7f8b98',pointRadius:0,borderDash:[4,4]}]},options:{responsive:true,animation:false,plugins:{legend:{display:false}},scales:{x:{type:'linear',min:0,max:1,title:{display:true,text:'Mean predicted probability'}},y:{min:0,max:1,title:{display:true,text:'Observed event rate'}}}}});
+      }
+      const by=d.byFaultType||{};
+      $('#evaluationFaultTable').innerHTML=`<table class="ops-table"><thead><tr><th>Synthetic fault class</th><th>Samples</th><th>False alarms</th><th>Missed events</th><th>False-alarm rate</th><th>Missed-event rate</th></tr></thead><tbody>${Object.entries(by).map(([fault,v])=>`<tr><td>${esc(fault)}</td><td>${v.samples}</td><td>${v.fp}</td><td>${v.fn}</td><td>${v.falseAlarmRate}%</td><td>${v.missedEventRate}%</td></tr>`).join('')||'<tr><td colspan="6">Diagnostics are not available for this artifact. Retrain models to generate curves.</td></tr>'}</tbody></table>`;
+      $('#evaluationNotice').textContent=modelMetrics.evaluationLimitations?.note || 'Metrics describe held-out synthetic samples only; independent field validation is required before operational use.';
+    };
+    select.onchange=draw; draw();
   }
 
   function renderModelCards() {

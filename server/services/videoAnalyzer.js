@@ -40,7 +40,7 @@ const fs = require('fs');
 const path = require('path');
 const os = require('os');
 const { v4: uuid } = require('uuid');
-const { Jimp, intToRGBA } = require('jimp');
+const sharp = require('sharp');
 
 const FRAME_RATE = Number(process.env.VIDEO_FRAME_RATE || 2); // frames sampled per second
 const MAX_FRAMES = Number(process.env.VIDEO_MAX_FRAMES || 40); // cap total frames analyzed

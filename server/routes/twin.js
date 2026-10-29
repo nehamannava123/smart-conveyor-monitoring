@@ -8,7 +8,7 @@
 const express = require('express');
 const { v4: uuidv4 } = require('uuid');
 const db = require('../config/db');
-const { requireAuth } = require('../middleware/auth');
+const { requireAuth, requireRole } = require('../middleware/auth');
 const {
   PARAM_BOUNDS,
   FAULT_CONDITIONS,
@@ -86,7 +86,7 @@ function makeTwinRouter(io = null) {
         tag: 'PLY-TL-01',
         name: 'Tail Tension Pulley & Discharge Zone',
         type: 'TAIL_PULLEY',
-        zoneId: 'zone-f',
+        zoneId: 'zone-e',
         specs: { diameterMm: 630, faceWidthMm: 1400, bearing: 'SKF 22216' },
         coordinates: { x: 920, y: 280, z: -85 }
       }
@@ -168,16 +168,21 @@ function makeTwinRouter(io = null) {
   });
 
   // POST /api/twin/scenarios — save an experiment scenario
-  router.post('/scenarios', requireAuth, (req, res) => {
+  router.post('/scenarios', requireAuth, requireRole('ADMIN', 'OPERATOR'), (req, res) => {
     const { name, notes, params, baselineParams } = req.body;
     if (!name || !params) {
       return res.status(400).json({ error: 'Scenario name and parameters are required.' });
     }
 
-    const simulation = solveConveyorPhysics(params);
+    let simulation;
     let comparison = null;
-    if (baselineParams) {
-      comparison = compareScenarios(baselineParams, params);
+    try {
+      simulation = solveConveyorPhysics(params);
+      if (baselineParams) {
+        comparison = compareScenarios(baselineParams, params);
+      }
+    } catch (err) {
+      return res.status(400).json({ error: `Scenario evaluation failed: ${err.message}` });
     }
 
     const scenario = {
@@ -199,7 +204,7 @@ function makeTwinRouter(io = null) {
   });
 
   // DELETE /api/twin/scenarios/:id — delete a saved scenario
-  router.delete('/scenarios/:id', requireAuth, (req, res) => {
+  router.delete('/scenarios/:id', requireAuth, requireRole('ADMIN', 'OPERATOR'), (req, res) => {
     const ok = db.deleteScenario(req.params.id);
     if (!ok) return res.status(404).json({ error: 'Scenario not found' });
     res.json({ message: 'Scenario deleted successfully' });

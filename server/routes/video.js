@@ -77,11 +77,15 @@ module.exports = function videoRouter(io) {
       });
     }
 
+    // Reserve the slot before the async upload begins so concurrent requests cannot all pass the check.
+    activeAnalyses++;
     upload.single('video')(req, res, async (uploadErr) => {
       if (uploadErr) {
+        activeAnalyses--;
         return res.status(400).json({ error: uploadErr.message });
       }
       if (!req.file) {
+        activeAnalyses--;
         return res.status(400).json({ error: 'No video file uploaded (field name must be "video")' });
       }
 
@@ -90,20 +94,20 @@ module.exports = function videoRouter(io) {
       // Validate magic bytes
       try {
         if (!verifyVideoMagicBytes(filePath)) {
+          activeAnalyses--;
           fs.unlink(filePath, () => {});
           return res.status(400).json({
             error: 'Invalid or unsupported video file format. The file content does not match a recognized video header.'
           });
         }
       } catch (err) {
+        activeAnalyses--;
         fs.unlink(filePath, () => {});
         return res.status(400).json({ error: 'Failed to inspect uploaded file' });
       }
 
-      activeAnalyses++;
-
       // Scope Socket.IO events to user's private channel
-      const userRoom = `user:${req.user.id || req.user.username}`;
+      const userRoom = `user:${req.user.sub || req.user.username}`;
       const emit = (stage, detail) => {
         io.to(userRoom).emit('video:progress', { stage, detail, at: new Date().toISOString() });
       };

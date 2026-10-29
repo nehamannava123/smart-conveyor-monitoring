@@ -1,13 +1,41 @@
-# HillGuard verification status
+# HillGuard final verification status
 
-## Verified in this environment
-- `npm test`: 34 tests passed, 0 failed.
-- Includes API/RBAC, ML pipeline/data-quality checks, persistence recovery, risk automation, Digital Twin physics/scenario persistence, video-analysis validation, assets, and work-order lifecycle.
-- Frontend stylesheet received a theme consistency and responsive navigation pass.
+## Finalized in this archive
+- Expanded, deterministic synthetic dataset: 25,000 rows, seed 42, raw sensor channels, derived ML features, fault/anomaly/hazard labels, and reproducible candidate partition column.
+- Regenerated model artifact using 25,000 synthetic scenarios (20,000 train candidates / 5,000 held-out candidates).
+- Autoencoder nominal reconstruction threshold raised from the 95th to the 99th percentile to reduce nuisance anomaly alerts; thresholds and metrics are stored in the model artifact.
+- Corrected the tail-pulley mapping to an existing route zone (`zone-e`).
+- Updated README benchmark table to match the bundled model artifact and removed the incorrect claim of a chronological split.
+- Cleaned persisted demo database and backup of test-generated alerts, test work orders, throwaway scenarios, and test audit events.
+- Added dataset generator, metadata, documentation, dataset schema/partition tests, and responsive/accessibility styling refinements.
 
-## Important limitations
-- The ML artifacts are trained/evaluated on synthetic data. Passing software tests does not establish real-world predictive accuracy; validate against independently collected, labeled conveyor telemetry before making operational claims.
-- Sensor telemetry in the demo is simulator-generated unless connected to real hardware.
-- Browser-level visual QA on multiple screen sizes and a full manual test of each role has not been completed here.
-- Dependency security audit from the user's machine reported vulnerable versions. Run `npm audit fix` locally, then rerun `npm audit` and `npm test`; do not use `--force` without reviewing breaking changes.
-- Configure strong production JWT secrets and persistent VAPID keys outside source control before deployment.
+## Checks completed in this environment
+- JavaScript syntax check across server, frontend, and test JavaScript files: PASS.
+- Dataset generator: PASS (25,000 rows generated deterministically with seed 42).
+- Model training: PASS (25,000 samples; artifact generated successfully).
+- Focused automated tests: **17 passed, 0 failed** across dataset integrity, frontend integrity, risk explainability, evaluation diagnostics, and ML inference.
+- ZIP archive integrity: verified after packaging.
+
+## Tests not fully verified
+- The complete test suite and full HTTP/browser integration suite could not be run because npm dependencies could not be downloaded in this environment (registry install timed out). Tests that import unavailable runtime dependencies such as `uuid` and `dotenv` cannot initialize until `npm ci` succeeds.
+- Interactive browser testing across all roles, devices, and pages has not been completed.
+- No physical sensor, PLC, or production-host deployment was available for end-to-end validation.
+
+## Data and safety limitations
+- The bundled dataset and model evaluation are synthetic. Synthetic timestamps are for reproducibility; rows are independently generated scenarios, not a physically continuous plant recording.
+- Labels are generated from simulation rules, so model metrics measure agreement with those rules and do not establish field performance.
+- Sensor calibration is not configured. Risk thresholds must be reviewed against the specific installation and engineering requirements.
+- Digital-twin replay and auto-stop are simulation/advisory features, not certified machine-safety controls.
+
+## Run locally
+```bash
+npm ci
+npm test
+npm start
+```
+
+Regenerate the dataset or model artifact:
+```bash
+npm run dataset:generate -- 25000 42
+npm run train:ml -- 25000 42
+```

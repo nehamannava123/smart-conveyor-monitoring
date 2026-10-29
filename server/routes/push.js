@@ -1,6 +1,6 @@
 const express = require('express');
 const db = require('../config/db');
-const { requireAuth } = require('../middleware/auth');
+const { requireAuth, requireRole } = require('../middleware/auth');
 const push = require('../services/push');
 
 module.exports = function pushRouter() {
@@ -29,7 +29,7 @@ module.exports = function pushRouter() {
 
   // Lets you confirm the pipeline works end-to-end from a real phone
   // before waiting for a real fault to occur.
-  router.post('/test', requireAuth, async (req, res) => {
+  router.post('/test', requireAuth, requireRole('ADMIN', 'OPERATOR'), async (req, res) => {
     const result = await push.notifyAll({
       title: '🔔 HillGuard test notification',
       body: `Triggered by ${req.user.username} — if you see this, push is working.`,

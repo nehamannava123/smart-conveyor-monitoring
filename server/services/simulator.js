@@ -132,6 +132,15 @@ function tickZone(zone) {
     activeFault: s.faultType
   };
 
+  // Persist a point-in-time risk snapshot alongside telemetry so history and
+  // event replay never recompute old readings using future data.
+  try {
+    const { computeRisk } = require('./riskEngine');
+    const risk = computeRisk(zone, reading);
+    reading.riskSnapshot = { score: risk.score, level: risk.level, primaryCause: risk.primaryCause, primaryCauseKey: risk.primaryCauseKey, contributors: risk.contributors, evaluatedAt: risk.evaluatedAt };
+  } catch (err) {
+    reading.riskSnapshot = null;
+  }
   db.addReading(zone.id, reading);
   return reading;
 }

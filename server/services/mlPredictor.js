@@ -313,6 +313,8 @@ class PredictiveModelSuite {
       horizonMinutes: 10,
       modelCount: ALL_MODEL_NAMES.length,
       models: this.metrics,
+      diagnostics: this.artifact?.evaluationDiagnostics || {},
+      evaluationLimitations: this.artifact?.evaluationLimitations || { datasetType: 'SYNTHETIC', fieldValidated: false, note: 'Metrics reflect synthetic evaluation only.' },
       baselines: this.baselines,
       tasks: this.artifact?.tasks || {
         hazardForecasting10m: SUPERVISED_MODEL_NAMES.concat(['Ensemble']),
@@ -333,8 +335,8 @@ class PredictiveModelSuite {
       trainingProvenance: this.artifact?.trainingProvenance || {
         type: 'SYNTHETIC_DATASET',
         isFieldValidated: false,
-        sampleCount: 5000,
-        split: '80% train / 20% held-out test'
+        sampleCount: 25000,
+        split: 'Deterministic seeded 80% train / 20% held-out test; synthetic IID scenarios'
       },
       rulDisclaimer: 'Remaining Useful Life (RUL) estimation is a future capability requiring empirical run-to-failure degradation curves. Current predictions reflect 10-minute hazard probability, not asset remaining life.'
     };

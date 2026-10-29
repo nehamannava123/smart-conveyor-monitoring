@@ -28,6 +28,7 @@ const makeAssetsRouter = require('./routes/assets');
 const makeWorkOrdersRouter = require('./routes/workOrders');
 const makeReportsRouter = require('./routes/reports');
 const makeTwinRouter = require('./routes/twin');
+const operationsRouter = require('./routes/operations');
 
 const PORT = process.env.PORT || 4000;
 const SIM_TICK_MS = Number(process.env.SIM_TICK_MS || 2000);
@@ -156,6 +157,7 @@ app.use('/api/assets', makeAssetsRouter(io));
 app.use('/api/work-orders', makeWorkOrdersRouter(io));
 app.use('/api/reports', makeReportsRouter());
 app.use('/api/twin', makeTwinRouter(io));
+app.use('/api/operations', operationsRouter);
 
 app.get('/api/health', (req, res) => {
   res.json({
@@ -190,7 +192,7 @@ io.use((socket, next) => {
 
 io.on('connection', (socket) => {
   // Join user-specific scoped room for private video and personal events
-  const userRoom = `user:${socket.user.id || socket.user.username}`;
+  const userRoom = `user:${socket.user.sub || socket.user.username}`;
   socket.join(userRoom);
 
   const enrichedZones = db.getZones().map((z) => {

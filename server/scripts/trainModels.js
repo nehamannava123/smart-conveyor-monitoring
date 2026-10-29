@@ -118,7 +118,13 @@ function sampleSyntheticSample(rng) {
   const dislodgementHazard10m = compoundHazard + hazardNoise > 2.6 ? 1 : 0;
   const isAnomaly = faultClass !== 'NORMAL' ? 1 : 0;
 
-  return { features: f, hazardLabel: dislodgementHazard10m, faultClass, isAnomaly };
+  return {
+    features: f,
+    // Preserve raw engineering channels alongside derived features so exported
+    // datasets can be inspected and reused without reverse-engineering them.
+    sensors: { alignmentMm: Number(alignment.toFixed(3)), vibrationMms: Number(Math.max(0.1, vibration).toFixed(3)), slipPct: Number(Math.max(0, slip).toFixed(3)), tensionPct: Number(tension.toFixed(3)), loadPct: Number(load.toFixed(3)), tempC: Number(temp.toFixed(3)), inclineDeg: Number(inclineDeg.toFixed(3)), curveSeverity: Number(curveSeverity.toFixed(4)) },
+    hazardLabel: dislodgementHazard10m, faultClass, isAnomaly
+  };
 }
 
 function standardizeFit(X) {
@@ -529,8 +535,9 @@ function trainNeuralAutoencoder(X_nominal, rng, { hiddenDim = 5, latentDim = 3, 
   const normErrors = X_nominal.map((x) => {
     return reconstructAutoencoder({ W1, B1, W2, B2, W3, B3, W4, B4 }, x).mse;
   }).sort((a, b) => a - b);
-  const p95Idx = Math.floor(normErrors.length * 0.95);
-  const threshold = normErrors[Math.min(normErrors.length - 1, p95Idx)] || 0.8;
+  // Use the 99th percentile of nominal reconstruction error to reduce nuisance alerts.
+  const p99Idx = Math.floor(normErrors.length * 0.99);
+  const threshold = normErrors[Math.min(normErrors.length - 1, p99Idx)] || 0.8;
 
   return {
     W1, B1, W2, B2, W3, B3, W4, B4,
@@ -728,10 +735,32 @@ function computeClassificationMetrics(yTrue, probabilities, threshold = 0.5) {
   };
 }
 
+function buildEvaluationDiagnostics(yTrue, probabilities, faultClasses = [], threshold = 0.5) {
+  const precisionRecallCurve = [];
+  for (let t = 0.05; t <= 0.951; t += 0.05) {
+    let tp = 0, fp = 0, fn = 0;
+    yTrue.forEach((y, i) => { const pred = probabilities[i] >= t; if (pred && y === 1) tp++; else if (pred && y === 0) fp++; else if (!pred && y === 1) fn++; });
+    precisionRecallCurve.push({ threshold: Number(t.toFixed(2)), precision: Number((tp / Math.max(1, tp + fp)).toFixed(4)), recall: Number((tp / Math.max(1, tp + fn)).toFixed(4)) });
+  }
+  const bins = Array.from({ length: 10 }, (_, i) => ({ lower: i / 10, upper: (i + 1) / 10, predicted: [], observed: [] }));
+  yTrue.forEach((y, i) => { const p = Math.max(0, Math.min(0.999999, probabilities[i])); const bin = bins[Math.floor(p * 10)]; bin.predicted.push(p); bin.observed.push(y); });
+  const calibrationBins = bins.map(b => ({ range: `${b.lower.toFixed(1)}–${b.upper.toFixed(1)}`, count: b.predicted.length, meanPredicted: b.predicted.length ? Number((b.predicted.reduce((a, v) => a + v, 0) / b.predicted.length).toFixed(4)) : null, observedRate: b.observed.length ? Number((b.observed.reduce((a, v) => a + v, 0) / b.observed.length).toFixed(4)) : null }));
+  let tp = 0, fp = 0, tn = 0, fn = 0;
+  yTrue.forEach((y, i) => { const pred = probabilities[i] >= threshold; if (y === 1 && pred) tp++; else if (y === 0 && pred) fp++; else if (y === 0 && !pred) tn++; else fn++; });
+  const byFaultType = {};
+  [...new Set(faultClasses)].forEach(type => {
+    const indices = faultClasses.map((v, i) => v === type ? i : -1).filter(i => i >= 0);
+    let ftp = 0, ffp = 0, ftn = 0, ffn = 0;
+    indices.forEach(i => { const y = yTrue[i], pred = probabilities[i] >= threshold; if (y === 1 && pred) ftp++; else if (y === 0 && pred) ffp++; else if (y === 0 && !pred) ftn++; else ffn++; });
+    byFaultType[type] = { samples: indices.length, tp: ftp, fp: ffp, tn: ftn, fn: ffn, falseAlarmRate: Number((ffp / Math.max(1, ffp + ftn) * 100).toFixed(2)), missedEventRate: Number((ffn / Math.max(1, ffn + ftp) * 100).toFixed(2)) };
+  });
+  return { threshold, confusionMatrix: { tp, fp, tn, fn }, falseAlarmRate: Number((fp / Math.max(1, fp + tn) * 100).toFixed(2)), missedEventRate: Number((fn / Math.max(1, fn + tp) * 100).toFixed(2)), precisionRecallCurve, calibrationBins, byFaultType };
+}
+
 // -------------------------------------------------------------
 // Pipeline Orchestrator & Artifact Generator
 // -------------------------------------------------------------
-function trainAndExportArtifact(outputPath = null, sampleCount = 5000, seed = 42) {
+function trainAndExportArtifact(outputPath = null, sampleCount = Number(process.env.ML_TRAIN_SAMPLES || 25000), seed = Number(process.env.ML_TRAIN_SEED || 42)) {
   const t0 = Date.now();
   const rng = createRng(seed);
 
@@ -741,7 +770,7 @@ function trainAndExportArtifact(outputPath = null, sampleCount = 5000, seed = 42
     dataset.push(sampleSyntheticSample(rng));
   }
 
-  // Chronological 80/20 split
+  // Deterministic held-out split. Samples are IID synthetic scenarios, not a continuous time series.
   const splitIdx = Math.floor(sampleCount * 0.8);
   const trainSet = dataset.slice(0, splitIdx);
   const testSet = dataset.slice(splitIdx);
@@ -827,6 +856,17 @@ function trainAndExportArtifact(outputPath = null, sampleCount = 5000, seed = 42
   const aeProbs = testXs.map((x) => predictAutoencoder(autoencoder, x).anomalyScore);
   modelMetrics['Neural Autoencoder'] = computeClassificationMetrics(testAnomaly, aeProbs, 0.5);
 
+  // Diagnostics are derived from held-out predictions, not reconstructed from
+  // rounded aggregate metrics. Supervised tasks use hazard labels; anomaly
+  // models use independent synthetic anomaly labels.
+  const evaluationDiagnostics = {};
+  for (const [name, probs] of Object.entries(predictions)) {
+    evaluationDiagnostics[name] = buildEvaluationDiagnostics(testY, probs, testSet.map(d => d.faultClass), 0.5);
+  }
+  evaluationDiagnostics['Ensemble'] = buildEvaluationDiagnostics(testY, ensembleProbs, testSet.map(d => d.faultClass), 0.5);
+  evaluationDiagnostics['Isolation Forest'] = buildEvaluationDiagnostics(testAnomaly, ifProbs, testSet.map(d => d.faultClass), isolationForest.threshold);
+  evaluationDiagnostics['Neural Autoencoder'] = buildEvaluationDiagnostics(testAnomaly, aeProbs, testSet.map(d => d.faultClass), 0.5);
+
   const durationMs = Date.now() - t0;
   console.log(`[ML Training] Completed in ${durationMs}ms`);
 
@@ -847,7 +887,7 @@ function trainAndExportArtifact(outputPath = null, sampleCount = 5000, seed = 42
       isFieldValidated: false,
       sampleCount,
       randomSeed: seed,
-      split: '80% train / 20% held-out test',
+      split: 'Deterministic seeded 80% train / 20% held-out test; generated samples are IID synthetic scenarios, not chronological field telemetry',
       featureNames: FEATURES
     },
     scaler,
@@ -860,6 +900,8 @@ function trainAndExportArtifact(outputPath = null, sampleCount = 5000, seed = 42
       constituents: ensembleConstituents
     },
     evaluationMetrics: modelMetrics,
+    evaluationDiagnostics,
+    evaluationLimitations: { datasetType: 'SYNTHETIC', fieldValidated: false, threshold: 0.5, note: 'Curves and subgroup metrics describe held-out synthetic samples only; they are not real-world performance estimates.' },
     candidateEvaluationReport: {
       evaluated: [
         { name: 'Isolation Forest', status: 'IMPLEMENTED', task: 'Unsupervised Anomaly Detection', rationale: 'Effective multi-sensor isolation without label bias; sub-millisecond inference.' },
@@ -892,11 +934,17 @@ function trainAndExportArtifact(outputPath = null, sampleCount = 5000, seed = 42
 }
 
 if (require.main === module) {
-  trainAndExportArtifact();
+  const sampleCount = Number(process.argv[2] || process.env.ML_TRAIN_SAMPLES || 10000);
+  const seed = Number(process.argv[3] || process.env.ML_TRAIN_SEED || 42);
+  if (!Number.isInteger(sampleCount) || sampleCount < 1000 || sampleCount > 100000) throw new Error('Training sample count must be an integer between 1000 and 100000.');
+  if (!Number.isInteger(seed) || seed < 0) throw new Error('Training seed must be a non-negative integer.');
+  trainAndExportArtifact(null, sampleCount, seed);
 }
 
 module.exports = {
   trainAndExportArtifact,
+  createRng,
+  sampleSyntheticSample,
   FEATURES,
   FAULT_CLASSES,
   predictLogistic,
@@ -907,6 +955,7 @@ module.exports = {
   predictAutoencoder,
   predictPhysicsInformed,
   extractCemaPhysicsFeatures,
+  buildEvaluationDiagnostics,
   standardizeTransform,
   computeClassificationMetrics
 };

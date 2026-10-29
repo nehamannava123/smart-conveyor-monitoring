@@ -8,6 +8,14 @@
 const express = require('express');
 const db = require('../config/db');
 const { requireAuth } = require('../middleware/auth');
+
+// Quote a CSV field and neutralise spreadsheet formula injection (=, +, -, @, tab, CR prefixes).
+function csvCell(v) {
+  let t = String(v ?? '');
+  if (/^[=+\-@\t\r]/.test(t)) t = `'${t}`;
+  return `"${t.replace(/"/g, '""')}"`;
+}
+
 const { model: mlModel } = require('../services/mlPredictor');
 
 module.exports = function reportsRouter() {
@@ -102,17 +110,17 @@ module.exports = function reportsRouter() {
     const alerts = db.getAlerts({ limit: 1000 });
     const headers = ['ID', 'CreatedAt', 'ZoneID', 'ZoneName', 'Level', 'Cause', 'Score', 'Status', 'AcknowledgedBy', 'ResolvedBy', 'WorkOrderID'];
     const rows = alerts.map((a) => [
-      `"${a.id}"`,
-      `"${a.createdAt || ''}"`,
-      `"${a.zoneId || ''}"`,
-      `"${(a.zoneName || '').replace(/"/g, '""')}"`,
-      `"${a.level || ''}"`,
-      `"${(a.cause || '').replace(/"/g, '""')}"`,
+      csvCell(a.id),
+      csvCell(a.createdAt),
+      csvCell(a.zoneId),
+      csvCell(a.zoneName),
+      csvCell(a.level),
+      csvCell(a.cause),
       a.score ?? 0,
-      `"${a.status || ''}"`,
-      `"${a.acknowledgedBy || ''}"`,
-      `"${a.resolvedBy || ''}"`,
-      `"${a.workOrderId || ''}"`
+      csvCell(a.status),
+      csvCell(a.acknowledgedBy),
+      csvCell(a.resolvedBy),
+      csvCell(a.workOrderId)
     ]);
 
     const csv = [headers.join(','), ...rows.map((r) => r.join(','))].join('\n');
@@ -126,17 +134,17 @@ module.exports = function reportsRouter() {
     const workOrders = db.getWorkOrders({ limit: 1000 });
     const headers = ['ID', 'CreatedAt', 'ZoneID', 'ZoneName', 'Title', 'Priority', 'Status', 'AssignedTechnician', 'OriginatingAlertID', 'ResolvedAt', 'ClosedAt'];
     const rows = workOrders.map((w) => [
-      `"${w.id}"`,
-      `"${w.createdAt || ''}"`,
-      `"${w.zoneId || ''}"`,
-      `"${(w.zoneName || '').replace(/"/g, '""')}"`,
-      `"${(w.title || '').replace(/"/g, '""')}"`,
-      `"${w.priority || ''}"`,
-      `"${w.status || ''}"`,
-      `"${w.assignedTechnician || ''}"`,
-      `"${w.originatingAlertId || ''}"`,
-      `"${w.resolvedAt || ''}"`,
-      `"${w.closedAt || ''}"`
+      csvCell(w.id),
+      csvCell(w.createdAt),
+      csvCell(w.zoneId),
+      csvCell(w.zoneName),
+      csvCell(w.title),
+      csvCell(w.priority),
+      csvCell(w.status),
+      csvCell(w.assignedTechnician),
+      csvCell(w.originatingAlertId),
+      csvCell(w.resolvedAt),
+      csvCell(w.closedAt)
     ]);
 
     const csv = [headers.join(','), ...rows.map((r) => r.join(','))].join('\n');

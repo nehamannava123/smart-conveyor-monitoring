@@ -1,24 +1,19 @@
-# Fixes and verification report
+# Fixes and tests
 
-## Changes
+## Final adjustments
+- Added `data/datasets/conveyor_synthetic_25000_seed42.csv` with 25,000 labeled synthetic scenarios and metadata.
+- Added deterministic dataset generation via `npm run dataset:generate -- 25000 42`.
+- Regenerated `data/models/model-artifact.json` from 25,000 synthetic scenarios with a deterministic 80/20 held-out split.
+- Raised the autoencoder's nominal reconstruction threshold to the 99th percentile to reduce nuisance alerts.
+- Fixed the tail-pulley digital-twin mapping to `zone-e`.
+- Cleaned test-generated data from both the primary and backup demo databases.
+- Added dataset integrity and partition tests.
+- Refined responsive styles and keyboard focus visibility.
+- Corrected documentation that previously described an IID synthetic split as chronological.
 
-- Added persistent light/dark theme toggle.
-- Added a Digital Twin active-zone picker synchronized with global zone selection.
-- Zone nodes now show zone name, risk score, and risk level; the selected zone receives a distinct animated highlight.
-- Digital Twin's active context shows the selected zone and sample time.
-- Selected-zone context initializes the engineering scenario from available zone telemetry, with range clamping.
-- Component inspection follows the selected zone when a component mapping exists.
-- Fixed tail-pulley mapping from `zone-f` to existing `zone-e`.
-- Added a frontend integrity regression test for the new features.
-
-## Tests run
-
-- `node --check public/js/app.js`: PASS.
-- `npm test`: 34 passed, 0 failed.
-- Local HTTP smoke test: `/api/health` returned `status: ok`, 5 zones, 5 assets, ML ready, storage healthy.
-
-## Not claimed as verified
-
-- Full browser-based interaction and visual verification across every page and role.
-- Real physical sensor connectivity or real-world ML performance.
-- Clean npm security audit. Registry access timed out in this environment; run `npm audit fix` on a networked machine, then `npm audit` and `npm test`. Review any remaining `uuid` major-version migration separately.
+## Verification
+- JavaScript syntax checks: PASS.
+- Dataset generation and structural validation: PASS.
+- Model training on 25,000 samples: PASS.
+- Focused tests: 17 passed, 0 failed.
+- Full test suite: BLOCKED because npm registry access timed out and runtime dependencies were not available. Do not treat the full suite as passed until `npm ci && npm test` succeeds locally.
